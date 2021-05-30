@@ -1,0 +1,1553 @@
+---
+title: "Untitled"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#download packages
+```{r}
+install.packages("readxl")
+install.packages("lubridate")
+install.packages("dplyr")
+install.packages("tseries")
+install.packages("PerformanceAnalytics")
+install.packages("xts")
+install.packages("ggplot2")
+install.packages("rugarch")
+install.packages("spd")
+install.packages("aTSA")
+install.packages("future.apply")
+install.packages("forecast")
+install.packages("openxlsx")
+install.packages("foreach")
+install.packages("doParallel")
+install.packages("stats")
+install.packages("VineCopula")
+install.packages("rafalib")
+install.packages("TSP")
+install.packages("psych")
+install.packages("network")
+install.packages('Matrix')
+install.packages("MASS")
+install.packages("moments")
+install.packages("GGally")
+```
+
+#download libraries
+```{r}
+library(readxl)
+library(lubridate)
+library(dplyr)
+library(tseries)
+library(PerformanceAnalytics)
+library(xts)
+library(ggplot2)
+library(rugarch)
+library(spd)
+library(aTSA)
+library(future.apply)
+library(forecast)
+library(openxlsx)
+library(foreach)
+library(doParallel)
+library(stats)
+library(VineCopula)
+library(rafalib)
+library(TSP)
+library(psych)
+library(network)
+library(Matrix)
+library(MASS)
+library(moments)
+library(GGally)
+```
+
+#download data
+```{r}
+data <- read_excel("C:/Users/Лиза/Downloads/dataset_diplom.xlsx")
+calendar <- read_excel("C:/Users/Лиза/Downloads/calendar_diplom.xlsx")
+```
+
+#data transformations of the full dataset
+```{r}
+data$DATE<-ymd(data$DATE)
+data<-data%>%mutate(TIME = paste(HOUR, MINUTE, SECOND, sep = ":"))
+data<-data%>%mutate(DATE_TIME = paste(DATE, TIME, sep = " "))
+data$DATE_TIME<-ymd_hms(data$DATE_TIME)
+data<-data%>%dplyr::select(DATE_TIME, DATE, TIME, AFKS:LNMOEX10, HOLIDAY:MORNING)
+data$TIME<-hms(data$TIME)
+data[] <- lapply(data, function(x) if(is.character(x)) as.numeric(x) else x)
+```
+
+#train part of the data: from 2018-01-03 11:00:00 to 2018-12-29 19:00:00
+#MOEX10 has 12 missing values
+```{r}
+data_2018_2019 <- data%>%filter(DATE_TIME >= "2018-01-03 11:00:00" & DATE_TIME <= "2019-12-30 19:00:00")
+colSums(is.na(data_2018_2019))
+data_2018_train <- data%>%filter(DATE_TIME >= "2018-01-03 11:00:00" & DATE_TIME < "2018-12-03 11:00:00")
+colSums(is.na(data_2018_train))
+data_2018_validation <- data%>%filter(DATE_TIME >= "2018-12-03 11:00:00" & DATE_TIME <= "2018-12-29 19:00:00")
+colSums(is.na(data_2018_validation))
+```
+
+#create the dataset of 10 stocks log-returns in xts format
+```{r}
+data_2018_train_lnreturn <- data_2018_train%>%dplyr::select(DATE_TIME, LNAFKS:MORNING)
+data_2018_train_lnreturn_xts <- xts(data_2018_train_lnreturn%>%dplyr::select(-DATE_TIME), order.by = data_2018_train_lnreturn$DATE_TIME)
+data_2018_validation_lnreturn <- data_2018_validation%>%dplyr::select(DATE_TIME, LNAFKS:MORNING)
+data_2018_validation_lnreturn_xts <- xts(data_2018_validation_lnreturn%>%dplyr::select(-DATE_TIME), order.by = data_2018_validation_lnreturn$DATE_TIME)
+data_2018_2019_lnreturn <- data_2018_2019%>%dplyr::select(DATE_TIME, LNAFKS:MORNING)
+data_2018_2019_lnreturn_xts <- xts(data_2018_2019_lnreturn%>%dplyr::select(-DATE_TIME), order.by = data_2018_2019_lnreturn$DATE_TIME)
+```
+
+#create table with descriptive statistics
+```{r}
+statistical_table <- matrix(0,nrow=11,ncol=5)
+for (i in 1:11) {
+  statistical_table[i,1] <- round(min(data_2018_2019_lnreturn_xts[,i,drop=TRUE], na.rm = TRUE),3)
+  statistical_table[i,2] <- round(max(data_2018_2019_lnreturn_xts[,i,drop=TRUE], na.rm = TRUE),3)
+  statistical_table[i,3] <- round(sd(data_2018_2019_lnreturn_xts[,i,drop=TRUE], na.rm = TRUE),3)
+  statistical_table[i,4] <- round(skewness(data_2018_2019_lnreturn_xts[,i,drop=TRUE], na.rm = TRUE),3)
+  statistical_table[i,5] <- round(kurtosis(data_2018_2019_lnreturn_xts[,i,drop=TRUE], na.rm = TRUE)-3,3)
+}
+statistical_table <- data.frame(statistical_table)
+colnames(statistical_table) <- c("min", "max", "sd", "skewness", "excess kurtosis")
+rownames(statistical_table) <- colnames(data_2018_2019_lnreturn_xts[,1:11])
+write.xlsx(statistical_table, paste0("statistical_table", ".xlsx"))
+```
+
+#plot dynamics of AFKS log-return and the distribution
+```{r}
+ggplot(data = data_2018_2019_lnreturn_xts, aes(x=1:nrow(data_2018_2019_lnreturn_xts), y = LNAFKS)) + geom_line(color = "#38f5be", size = 0.5)+xlab("periods")+ylab("AFKS log-return")+theme(panel.background = element_rect(fill = "white",colour="lightgrey"),axis.text=element_text(size=30),axis.title=element_text(size=30),legend.position = "bottom", legend.text = element_text(size=30)) +guides(color = guide_legend(title=NULL))
+ggsave("AFKS_TS.png", width = 20, height = 10)
+ggplot() + geom_histogram(data=data_2018_2019_lnreturn_xts, aes(x = LNAFKS, y=stat(density),fill="empirical density of AFKS log-return"), bins = 100, color="white")+geom_density(data = data.frame(x=1:1000000, y=rnorm(1000000, mean = mean(data_2018_2019_lnreturn_xts$LNAFKS), sd=sd(data_2018_2019_lnreturn_xts$LNAFKS))),aes(x=y, fill="density of the theoretical normal distribution"), alpha = 0.2, size = 0.001)+scale_fill_manual("",values = c("empirical density of AFKS log-return"="#38f5be", "density of the theoretical normal distribution"="#8866F6"))+xlab("AFKS log-return")+theme(panel.background = element_rect(fill = "white",colour="lightgrey"),axis.text=element_text(size=30),axis.title=element_text(size=30),legend.position = "bottom", legend.text = element_text(size=30)) +guides(color = guide_legend(title=NULL))
+ggsave("distribution_AFKS.png", width = 20, height = 10)
+```
+
+
+```{r}
+ggplot(data = data_2018_2019_lnreturn_xts, aes(x=1:nrow(data_2018_2019_lnreturn_xts), y = LNAFKS)) + geom_line(color = "#38f5be", size = 0.5)+xlab("periods")+ylab("AFKS log-return")+theme(panel.background = element_rect(fill = "white",colour="lightgrey"),axis.text=element_text(size=30),axis.title=element_text(size=30),legend.position = "bottom", legend.text = element_text(size=30)) +guides(color = guide_legend(title=NULL))
+ggsave("AFKS_TS_online_appendix.png", width = 20, height = 10)
+ggplot(data = data_2018_2019_lnreturn_xts, aes(x=1:nrow(data_2018_2019_lnreturn_xts), y = LNGAZP)) + geom_line(color = "#38f5be", size = 0.5)+xlab("periods")+ylab("GAZP log-return")+theme(panel.background = element_rect(fill = "white",colour="lightgrey"),axis.text=element_text(size=30),axis.title=element_text(size=30),legend.position = "bottom", legend.text = element_text(size=30)) +guides(color = guide_legend(title=NULL))
+ggsave("GAZP_TS_online_appendix.png", width = 20, height = 10)
+ggplot(data = data_2018_2019_lnreturn_xts, aes(x=1:nrow(data_2018_2019_lnreturn_xts), y = LNGMKN)) + geom_line(color = "#38f5be", size = 0.5)+xlab("periods")+ylab("GMKN log-return")+theme(panel.background = element_rect(fill = "white",colour="lightgrey"),axis.text=element_text(size=30),axis.title=element_text(size=30),legend.position = "bottom", legend.text = element_text(size=30)) +guides(color = guide_legend(title=NULL))
+ggsave("GMKN_TS_online_appendix.png", width = 20, height = 10)
+ggplot(data = data_2018_2019_lnreturn_xts, aes(x=1:nrow(data_2018_2019_lnreturn_xts), y = LNLKOH)) + geom_line(color = "#38f5be", size = 0.5)+xlab("periods")+ylab("LKOH log-return")+theme(panel.background = element_rect(fill = "white",colour="lightgrey"),axis.text=element_text(size=30),axis.title=element_text(size=30),legend.position = "bottom", legend.text = element_text(size=30)) +guides(color = guide_legend(title=NULL))
+ggsave("LKOH_TS_online_appendix.png", width = 20, height = 10)
+ggplot(data = data_2018_2019_lnreturn_xts, aes(x=1:nrow(data_2018_2019_lnreturn_xts), y = LNMAGN)) + geom_line(color = "#38f5be", size = 0.5)+xlab("periods")+ylab("MAGN log-return")+theme(panel.background = element_rect(fill = "white",colour="lightgrey"),axis.text=element_text(size=30),axis.title=element_text(size=30),legend.position = "bottom", legend.text = element_text(size=30)) +guides(color = guide_legend(title=NULL))
+ggsave("MAGN_TS_online_appendix.png", width = 20, height = 10)
+ggplot(data = data_2018_2019_lnreturn_xts, aes(x=1:nrow(data_2018_2019_lnreturn_xts), y = LNPOLY)) + geom_line(color = "#38f5be", size = 0.5)+xlab("periods")+ylab("POLY log-return")+theme(panel.background = element_rect(fill = "white",colour="lightgrey"),axis.text=element_text(size=30),axis.title=element_text(size=30),legend.position = "bottom", legend.text = element_text(size=30)) +guides(color = guide_legend(title=NULL))
+ggsave("POLY_TS_online_appendix.png", width = 20, height = 10)
+ggplot(data = data_2018_2019_lnreturn_xts, aes(x=1:nrow(data_2018_2019_lnreturn_xts), y = LNROSN)) + geom_line(color = "#38f5be", size = 0.5)+xlab("periods")+ylab("ROSN log-return")+theme(panel.background = element_rect(fill = "white",colour="lightgrey"),axis.text=element_text(size=30),axis.title=element_text(size=30),legend.position = "bottom", legend.text = element_text(size=30)) +guides(color = guide_legend(title=NULL))
+ggsave("ROSN_TS_online_appendix.png", width = 20, height = 10)
+ggplot(data = data_2018_2019_lnreturn_xts, aes(x=1:nrow(data_2018_2019_lnreturn_xts), y = LNSBER)) + geom_line(color = "#38f5be", size = 0.5)+xlab("periods")+ylab("SBER log-return")+theme(panel.background = element_rect(fill = "white",colour="lightgrey"),axis.text=element_text(size=30),axis.title=element_text(size=30),legend.position = "bottom", legend.text = element_text(size=30)) +guides(color = guide_legend(title=NULL))
+ggsave("SBER_TS_online_appendix.png", width = 20, height = 10)
+ggplot(data = data_2018_2019_lnreturn_xts, aes(x=1:nrow(data_2018_2019_lnreturn_xts), y = LNTATN)) + geom_line(color = "#38f5be", size = 0.5)+xlab("periods")+ylab("TATN log-return")+theme(panel.background = element_rect(fill = "white",colour="lightgrey"),axis.text=element_text(size=30),axis.title=element_text(size=30),legend.position = "bottom", legend.text = element_text(size=30)) +guides(color = guide_legend(title=NULL))
+ggsave("TATN_TS_online_appendix.png", width = 20, height = 10)
+ggplot(data = data_2018_2019_lnreturn_xts, aes(x=1:nrow(data_2018_2019_lnreturn_xts), y = LNYNDX)) + geom_line(color = "#38f5be", size = 0.5)+xlab("periods")+ylab("YNDX log-return")+theme(panel.background = element_rect(fill = "white",colour="lightgrey"),axis.text=element_text(size=30),axis.title=element_text(size=30),legend.position = "bottom", legend.text = element_text(size=30)) +guides(color = guide_legend(title=NULL))
+ggsave("YNDX_TS_online_appendix.png", width = 20, height = 10)
+ggplot(data = data_2018_2019_lnreturn_xts, aes(x=1:nrow(data_2018_2019_lnreturn_xts), y = LNMOEX10)) + geom_line(color = "#38f5be", size = 0.5)+xlab("periods")+ylab("MOEX10 log-return")+theme(panel.background = element_rect(fill = "white",colour="lightgrey"),axis.text=element_text(size=30),axis.title=element_text(size=30),legend.position = "bottom", legend.text = element_text(size=30)) +guides(color = guide_legend(title=NULL))
+ggsave("MOEX10_TS_online_appendix.png", width = 20, height = 10)
+```
+
+```{r}
+ggplot() + geom_histogram(data=data_2018_2019_lnreturn_xts, aes(x = LNAFKS, y=stat(density),fill="empirical density of AFKS log-return"), bins = 100, color="white")+geom_density(data = data.frame(x=1:1000000, y=rnorm(1000000, mean = mean(data_2018_2019_lnreturn_xts$LNAFKS), sd=sd(data_2018_2019_lnreturn_xts$LNAFKS))),aes(x=y, fill="density of the theoretical normal distribution"), alpha = 0.2, size = 0.001)+scale_fill_manual("",values = c("empirical density of AFKS log-return"="#38f5be", "density of the theoretical normal distribution"="#8866F6"))+xlab("AFKS log-return")+theme(panel.background = element_rect(fill = "white",colour="lightgrey"),axis.text=element_text(size=30),axis.title=element_text(size=30),legend.position = "bottom", legend.text = element_text(size=30)) +guides(color = guide_legend(title=NULL))
+ggsave("distribution_AFKS_online_appendix.png", width = 20, height = 10)
+ggplot() + geom_histogram(data=data_2018_2019_lnreturn_xts, aes(x = LNGAZP, y=stat(density),fill="empirical density of GAZP log-return"), bins = 100, color="white")+geom_density(data = data.frame(x=1:1000000, y=rnorm(1000000, mean = mean(data_2018_2019_lnreturn_xts$LNGAZP), sd=sd(data_2018_2019_lnreturn_xts$LNGAZP))),aes(x=y, fill="density of the theoretical normal distribution"), alpha = 0.2, size = 0.001)+scale_fill_manual("",values = c("empirical density of GAZP log-return"="#38f5be", "density of the theoretical normal distribution"="#8866F6"))+xlab("GAZP log-return")+theme(panel.background = element_rect(fill = "white",colour="lightgrey"),axis.text=element_text(size=30),axis.title=element_text(size=30),legend.position = "bottom", legend.text = element_text(size=30)) +guides(color = guide_legend(title=NULL))
+ggsave("distribution_GAZP_online_appendix.png", width = 20, height = 10)
+ggplot() + geom_histogram(data=data_2018_2019_lnreturn_xts, aes(x = LNGMKN, y=stat(density),fill="empirical density of GMKN log-return"), bins = 100, color="white")+geom_density(data = data.frame(x=1:1000000, y=rnorm(1000000, mean = mean(data_2018_2019_lnreturn_xts$LNGMKN), sd=sd(data_2018_2019_lnreturn_xts$LNGMKN))),aes(x=y, fill="density of the theoretical normal distribution"), alpha = 0.2, size = 0.001)+scale_fill_manual("",values = c("empirical density of GMKN log-return"="#38f5be", "density of the theoretical normal distribution"="#8866F6"))+xlab("GMKN log-return")+theme(panel.background = element_rect(fill = "white",colour="lightgrey"),axis.text=element_text(size=30),axis.title=element_text(size=30),legend.position = "bottom", legend.text = element_text(size=30)) +guides(color = guide_legend(title=NULL))
+ggsave("distribution_GMKN_online_appendix.png", width = 20, height = 10)
+ggplot() + geom_histogram(data=data_2018_2019_lnreturn_xts, aes(x = LNLKOH, y=stat(density),fill="empirical density of LKOH log-return"), bins = 100, color="white")+geom_density(data = data.frame(x=1:1000000, y=rnorm(1000000, mean = mean(data_2018_2019_lnreturn_xts$LNLKOH), sd=sd(data_2018_2019_lnreturn_xts$LNLKOH))),aes(x=y, fill="density of the theoretical normal distribution"), alpha = 0.2, size = 0.001)+scale_fill_manual("",values = c("empirical density of LKOH log-return"="#38f5be", "density of the theoretical normal distribution"="#8866F6"))+xlab("LKOH log-return")+theme(panel.background = element_rect(fill = "white",colour="lightgrey"),axis.text=element_text(size=30),axis.title=element_text(size=30),legend.position = "bottom", legend.text = element_text(size=30)) +guides(color = guide_legend(title=NULL))
+ggsave("distribution_LKOH_online_appendix.png", width = 20, height = 10)
+ggplot() + geom_histogram(data=data_2018_2019_lnreturn_xts, aes(x = LNMAGN, y=stat(density),fill="empirical density of MAGN log-return"), bins = 100, color="white")+geom_density(data = data.frame(x=1:1000000, y=rnorm(1000000, mean = mean(data_2018_2019_lnreturn_xts$LNMAGN), sd=sd(data_2018_2019_lnreturn_xts$LNMAGN))),aes(x=y, fill="density of the theoretical normal distribution"), alpha = 0.2, size = 0.001)+scale_fill_manual("",values = c("empirical density of MAGN log-return"="#38f5be", "density of the theoretical normal distribution"="#8866F6"))+xlab("MAGN log-return")+theme(panel.background = element_rect(fill = "white",colour="lightgrey"),axis.text=element_text(size=30),axis.title=element_text(size=30),legend.position = "bottom", legend.text = element_text(size=30)) +guides(color = guide_legend(title=NULL))
+ggsave("distribution_MAGN_online_appendix.png", width = 20, height = 10)
+ggplot() + geom_histogram(data=data_2018_2019_lnreturn_xts, aes(x = LNPOLY, y=stat(density),fill="empirical density of POLY log-return"), bins = 100, color="white")+geom_density(data = data.frame(x=1:1000000, y=rnorm(1000000, mean = mean(data_2018_2019_lnreturn_xts$LNPOLY), sd=sd(data_2018_2019_lnreturn_xts$LNPOLY))),aes(x=y, fill="density of the theoretical normal distribution"), alpha = 0.2, size = 0.001)+scale_fill_manual("",values = c("empirical density of POLY log-return"="#38f5be", "density of the theoretical normal distribution"="#8866F6"))+xlab("POLY log-return")+theme(panel.background = element_rect(fill = "white",colour="lightgrey"),axis.text=element_text(size=30),axis.title=element_text(size=30),legend.position = "bottom", legend.text = element_text(size=30)) +guides(color = guide_legend(title=NULL))
+ggsave("distribution_POLY_online_appendix.png", width = 20, height = 10)
+ggplot() + geom_histogram(data=data_2018_2019_lnreturn_xts, aes(x = LNROSN, y=stat(density),fill="empirical density of ROSN log-return"), bins = 100, color="white")+geom_density(data = data.frame(x=1:1000000, y=rnorm(1000000, mean = mean(data_2018_2019_lnreturn_xts$LNROSN), sd=sd(data_2018_2019_lnreturn_xts$LNROSN))),aes(x=y, fill="density of the theoretical normal distribution"), alpha = 0.2, size = 0.001)+scale_fill_manual("",values = c("empirical density of ROSN log-return"="#38f5be", "density of the theoretical normal distribution"="#8866F6"))+xlab("ROSN log-return")+theme(panel.background = element_rect(fill = "white",colour="lightgrey"),axis.text=element_text(size=30),axis.title=element_text(size=30),legend.position = "bottom", legend.text = element_text(size=30)) +guides(color = guide_legend(title=NULL))
+ggsave("distribution_ROSN_online_appendix.png", width = 20, height = 10)
+ggplot() + geom_histogram(data=data_2018_2019_lnreturn_xts, aes(x = LNSBER, y=stat(density),fill="empirical density of SBER log-return"), bins = 100, color="white")+geom_density(data = data.frame(x=1:1000000, y=rnorm(1000000, mean = mean(data_2018_2019_lnreturn_xts$LNSBER), sd=sd(data_2018_2019_lnreturn_xts$LNSBER))),aes(x=y, fill="density of the theoretical normal distribution"), alpha = 0.2, size = 0.001)+scale_fill_manual("",values = c("empirical density of SBER log-return"="#38f5be", "density of the theoretical normal distribution"="#8866F6"))+xlab("SBER log-return")+theme(panel.background = element_rect(fill = "white",colour="lightgrey"),axis.text=element_text(size=30),axis.title=element_text(size=30),legend.position = "bottom", legend.text = element_text(size=30)) +guides(color = guide_legend(title=NULL))
+ggsave("distribution_SBER_online_appendix.png", width = 20, height = 10)
+ggplot() + geom_histogram(data=data_2018_2019_lnreturn_xts, aes(x = LNTATN, y=stat(density),fill="empirical density of TATN log-return"), bins = 100, color="white")+geom_density(data = data.frame(x=1:1000000, y=rnorm(1000000, mean = mean(data_2018_2019_lnreturn_xts$LNTATN), sd=sd(data_2018_2019_lnreturn_xts$LNTATN))),aes(x=y, fill="density of the theoretical normal distribution"), alpha = 0.2, size = 0.001)+scale_fill_manual("",values = c("empirical density of TATN log-return"="#38f5be", "density of the theoretical normal distribution"="#8866F6"))+xlab("TATN log-return")+theme(panel.background = element_rect(fill = "white",colour="lightgrey"),axis.text=element_text(size=30),axis.title=element_text(size=30),legend.position = "bottom", legend.text = element_text(size=30)) +guides(color = guide_legend(title=NULL))
+ggsave("distribution_TATN_online_appendix.png", width = 20, height = 10)
+ggplot() + geom_histogram(data=data_2018_2019_lnreturn_xts, aes(x = LNYNDX, y=stat(density),fill="empirical density of YNDX log-return"), bins = 100, color="white")+geom_density(data = data.frame(x=1:1000000, y=rnorm(1000000, mean = mean(data_2018_2019_lnreturn_xts$LNYNDX), sd=sd(data_2018_2019_lnreturn_xts$LNYNDX))),aes(x=y, fill="density of the theoretical normal distribution"), alpha = 0.2, size = 0.001)+scale_fill_manual("",values = c("empirical density of YNDX log-return"="#38f5be", "density of the theoretical normal distribution"="#8866F6"))+xlab("YNDX log-return")+theme(panel.background = element_rect(fill = "white",colour="lightgrey"),axis.text=element_text(size=30),axis.title=element_text(size=30),legend.position = "bottom", legend.text = element_text(size=30)) +guides(color = guide_legend(title=NULL))
+ggsave("distribution_YNDX_online_appendix.png", width = 20, height = 10)
+ggplot() + geom_histogram(data=data_2018_2019_lnreturn_xts, aes(x = LNMOEX10, y=stat(density),fill="empirical density of MOEX10 log-return"), bins = 100, color="white")+geom_density(data = data.frame(x=1:1000000, y=rnorm(1000000, mean = mean(data_2018_2019_lnreturn_xts$LNMOEX10,na.rm=TRUE), sd=sd(data_2018_2019_lnreturn_xts$LNMOEX10,na.rm=TRUE))),aes(x=y, fill="density of the theoretical normal distribution"), alpha = 0.2, size = 0.001)+scale_fill_manual("",values = c("empirical density of MOEX10 log-return"="#38f5be", "density of the theoretical normal distribution"="#8866F6"))+xlab("MOEX10 log-return")+theme(panel.background = element_rect(fill = "white",colour="lightgrey"),axis.text=element_text(size=30),axis.title=element_text(size=30),legend.position = "bottom", legend.text = element_text(size=30)) +guides(color = guide_legend(title=NULL))
+ggsave("distribution_MOEX10_online_appendix.png", width = 20, height = 10)
+```
+
+
+#analysis of dependence between stocks
+```{r}
+chart.Correlation(data_2018_2019_lnreturn_xts[,1:11], histogram = FALSE)
+ggplot(data = data_2018_2019_lnreturn_xts,aes(x=LNMAGN, y=LNPOLY))+geom_point(color="black", alpha =0.5)+geom_smooth(method="loess",se = FALSE)+xlab("MAGN log-return")+ylab("POLY log-return")+theme(panel.background = element_rect(fill = "white",colour="lightgrey"),axis.text=element_text(size=30),axis.title=element_text(size=30),legend.position = "bottom") +guides(color = guide_legend(title=NULL))
+ggsave("scatter_MAGN_POLY.png", width = 20, height = 10)
+```
+
+```{r}
+ggplot(data = data_2018_2019_lnreturn_xts,aes(x=LNAFKS, y=LNGAZP))+geom_point(color="black", alpha =0.5)+geom_smooth(method="loess",se = FALSE)+xlab("AFKS log-return")+ylab("GAZP log-return")+theme(panel.background = element_rect(fill = "white",colour="lightgrey"),axis.text=element_text(size=30),axis.title=element_text(size=30),legend.position = "bottom") +guides(color = guide_legend(title=NULL))
+ggsave("scatter_AFKS_GAZP.png", width = 20, height = 10)
+ggplot(data = data_2018_2019_lnreturn_xts,aes(x=LNAFKS, y=LNGMKN))+geom_point(color="black", alpha =0.5)+geom_smooth(method="loess",se = FALSE)+xlab("AFKS log-return")+ylab("GMKN log-return")+theme(panel.background = element_rect(fill = "white",colour="lightgrey"),axis.text=element_text(size=30),axis.title=element_text(size=30),legend.position = "bottom") +guides(color = guide_legend(title=NULL))
+ggsave("scatter_AFKS_GMKN.png", width = 20, height = 10)
+ggplot(data = data_2018_2019_lnreturn_xts,aes(x=LNAFKS, y=LNLKOH))+geom_point(color="black", alpha =0.5)+geom_smooth(method="loess",se = FALSE)+xlab("AFKS log-return")+ylab("LKOH log-return")+theme(panel.background = element_rect(fill = "white",colour="lightgrey"),axis.text=element_text(size=30),axis.title=element_text(size=30),legend.position = "bottom") +guides(color = guide_legend(title=NULL))
+ggsave("scatter_AFKS_LKOH.png", width = 20, height = 10)
+ggplot(data = data_2018_2019_lnreturn_xts,aes(x=LNAFKS, y=LNMAGN))+geom_point(color="black", alpha =0.5)+geom_smooth(method="loess",se = FALSE)+xlab("AFKS log-return")+ylab("MAGN log-return")+theme(panel.background = element_rect(fill = "white",colour="lightgrey"),axis.text=element_text(size=30),axis.title=element_text(size=30),legend.position = "bottom") +guides(color = guide_legend(title=NULL))
+ggsave("scatter_AFKS_MAGN.png", width = 20, height = 10)
+ggplot(data = data_2018_2019_lnreturn_xts,aes(x=LNAFKS, y=LNPOLY))+geom_point(color="black", alpha =0.5)+geom_smooth(method="loess",se = FALSE)+xlab("AFKS log-return")+ylab("POLY log-return")+theme(panel.background = element_rect(fill = "white",colour="lightgrey"),axis.text=element_text(size=30),axis.title=element_text(size=30),legend.position = "bottom") +guides(color = guide_legend(title=NULL))
+ggsave("scatter_AFKS_POLY.png", width = 20, height = 10)
+ggplot(data = data_2018_2019_lnreturn_xts,aes(x=LNAFKS, y=LNROSN))+geom_point(color="black", alpha =0.5)+geom_smooth(method="loess",se = FALSE)+xlab("AFKS log-return")+ylab("ROSN log-return")+theme(panel.background = element_rect(fill = "white",colour="lightgrey"),axis.text=element_text(size=30),axis.title=element_text(size=30),legend.position = "bottom") +guides(color = guide_legend(title=NULL))
+ggsave("scatter_AFKS_ROSN.png", width = 20, height = 10)
+ggplot(data = data_2018_2019_lnreturn_xts,aes(x=LNAFKS, y=LNSBER))+geom_point(color="black", alpha =0.5)+geom_smooth(method="loess",se = FALSE)+xlab("AFKS log-return")+ylab("SBER log-return")+theme(panel.background = element_rect(fill = "white",colour="lightgrey"),axis.text=element_text(size=30),axis.title=element_text(size=30),legend.position = "bottom") +guides(color = guide_legend(title=NULL))
+ggsave("scatter_AFKS_SBER.png", width = 20, height = 10)
+ggplot(data = data_2018_2019_lnreturn_xts,aes(x=LNAFKS, y=LNTATN))+geom_point(color="black", alpha =0.5)+geom_smooth(method="loess",se = FALSE)+xlab("AFKS log-return")+ylab("TATN log-return")+theme(panel.background = element_rect(fill = "white",colour="lightgrey"),axis.text=element_text(size=30),axis.title=element_text(size=30),legend.position = "bottom") +guides(color = guide_legend(title=NULL))
+ggsave("scatter_AFKS_TATN.png", width = 20, height = 10)
+ggplot(data = data_2018_2019_lnreturn_xts,aes(x=LNAFKS, y=LNYNDX))+geom_point(color="black", alpha =0.5)+geom_smooth(method="loess",se = FALSE)+xlab("AFKS log-return")+ylab("YNDX log-return")+theme(panel.background = element_rect(fill = "white",colour="lightgrey"),axis.text=element_text(size=30),axis.title=element_text(size=30),legend.position = "bottom") +guides(color = guide_legend(title=NULL))
+ggsave("scatter_AFKS_YNDX.png", width = 20, height = 10)
+ggplot(data = data_2018_2019_lnreturn_xts,aes(x=LNGAZP, y=LNGMKN))+geom_point(color="black", alpha =0.5)+geom_smooth(method="loess",se = FALSE)+xlab("GAZP log-return")+ylab("GMKN log-return")+theme(panel.background = element_rect(fill = "white",colour="lightgrey"),axis.text=element_text(size=30),axis.title=element_text(size=30),legend.position = "bottom") +guides(color = guide_legend(title=NULL))
+ggsave("scatter_GAZP_GMKN.png", width = 20, height = 10)
+ggplot(data = data_2018_2019_lnreturn_xts,aes(x=LNGAZP, y=LNLKOH))+geom_point(color="black", alpha =0.5)+geom_smooth(method="loess",se = FALSE)+xlab("GAZP log-return")+ylab("LKOH log-return")+theme(panel.background = element_rect(fill = "white",colour="lightgrey"),axis.text=element_text(size=30),axis.title=element_text(size=30),legend.position = "bottom") +guides(color = guide_legend(title=NULL))
+ggsave("scatter_GAZP_LKOH.png", width = 20, height = 10)
+ggplot(data = data_2018_2019_lnreturn_xts,aes(x=LNGAZP, y=LNMAGN))+geom_point(color="black", alpha =0.5)+geom_smooth(method="loess",se = FALSE)+xlab("GAZP log-return")+ylab("MAGN log-return")+theme(panel.background = element_rect(fill = "white",colour="lightgrey"),axis.text=element_text(size=30),axis.title=element_text(size=30),legend.position = "bottom") +guides(color = guide_legend(title=NULL))
+ggsave("scatter_GAZP_MAGN.png", width = 20, height = 10)
+ggplot(data = data_2018_2019_lnreturn_xts,aes(x=LNGAZP, y=LNPOLY))+geom_point(color="black", alpha =0.5)+geom_smooth(method="loess",se = FALSE)+xlab("GAZP log-return")+ylab("POLY log-return")+theme(panel.background = element_rect(fill = "white",colour="lightgrey"),axis.text=element_text(size=30),axis.title=element_text(size=30),legend.position = "bottom") +guides(color = guide_legend(title=NULL))
+ggsave("scatter_GAZP_POLY.png", width = 20, height = 10)
+ggplot(data = data_2018_2019_lnreturn_xts,aes(x=LNGAZP, y=LNROSN))+geom_point(color="black", alpha =0.5)+geom_smooth(method="loess",se = FALSE)+xlab("GAZP log-return")+ylab("ROSN log-return")+theme(panel.background = element_rect(fill = "white",colour="lightgrey"),axis.text=element_text(size=30),axis.title=element_text(size=30),legend.position = "bottom") +guides(color = guide_legend(title=NULL))
+ggsave("scatter_GAZP_ROSN.png", width = 20, height = 10)
+ggplot(data = data_2018_2019_lnreturn_xts,aes(x=LNGAZP, y=LNSBER))+geom_point(color="black", alpha =0.5)+geom_smooth(method="loess",se = FALSE)+xlab("GAZP log-return")+ylab("SBER log-return")+theme(panel.background = element_rect(fill = "white",colour="lightgrey"),axis.text=element_text(size=30),axis.title=element_text(size=30),legend.position = "bottom") +guides(color = guide_legend(title=NULL))
+ggsave("scatter_GAZP_SBER.png", width = 20, height = 10)
+ggplot(data = data_2018_2019_lnreturn_xts,aes(x=LNGAZP, y=LNTATN))+geom_point(color="black", alpha =0.5)+geom_smooth(method="loess",se = FALSE)+xlab("GAZP log-return")+ylab("TATN log-return")+theme(panel.background = element_rect(fill = "white",colour="lightgrey"),axis.text=element_text(size=30),axis.title=element_text(size=30),legend.position = "bottom") +guides(color = guide_legend(title=NULL))
+ggsave("scatter_GAZP_TATN.png", width = 20, height = 10)
+ggplot(data = data_2018_2019_lnreturn_xts,aes(x=LNGAZP, y=LNYNDX))+geom_point(color="black", alpha =0.5)+geom_smooth(method="loess",se = FALSE)+xlab("GAZP log-return")+ylab("YNDX log-return")+theme(panel.background = element_rect(fill = "white",colour="lightgrey"),axis.text=element_text(size=30),axis.title=element_text(size=30),legend.position = "bottom") +guides(color = guide_legend(title=NULL))
+ggsave("scatter_GAZP_YNDX.png", width = 20, height = 10)
+ggplot(data = data_2018_2019_lnreturn_xts,aes(x=LNGMKN, y=LNLKOH))+geom_point(color="black", alpha =0.5)+geom_smooth(method="loess",se = FALSE)+xlab("GMKN log-return")+ylab("LKOH log-return")+theme(panel.background = element_rect(fill = "white",colour="lightgrey"),axis.text=element_text(size=30),axis.title=element_text(size=30),legend.position = "bottom") +guides(color = guide_legend(title=NULL))
+ggsave("scatter_GMKN_LKOH.png", width = 20, height = 10)
+ggplot(data = data_2018_2019_lnreturn_xts,aes(x=LNGMKN, y=LNMAGN))+geom_point(color="black", alpha =0.5)+geom_smooth(method="loess",se = FALSE)+xlab("GMKN log-return")+ylab("MAGN log-return")+theme(panel.background = element_rect(fill = "white",colour="lightgrey"),axis.text=element_text(size=30),axis.title=element_text(size=30),legend.position = "bottom") +guides(color = guide_legend(title=NULL))
+ggsave("scatter_GMKN_MAGN.png", width = 20, height = 10)
+ggplot(data = data_2018_2019_lnreturn_xts,aes(x=LNGMKN, y=LNPOLY))+geom_point(color="black", alpha =0.5)+geom_smooth(method="loess",se = FALSE)+xlab("GMKN log-return")+ylab("POLY log-return")+theme(panel.background = element_rect(fill = "white",colour="lightgrey"),axis.text=element_text(size=30),axis.title=element_text(size=30),legend.position = "bottom") +guides(color = guide_legend(title=NULL))
+ggsave("scatter_GMKN_POLY.png", width = 20, height = 10)
+ggplot(data = data_2018_2019_lnreturn_xts,aes(x=LNGMKN, y=LNROSN))+geom_point(color="black", alpha =0.5)+geom_smooth(method="loess",se = FALSE)+xlab("GMKN log-return")+ylab("ROSN log-return")+theme(panel.background = element_rect(fill = "white",colour="lightgrey"),axis.text=element_text(size=30),axis.title=element_text(size=30),legend.position = "bottom") +guides(color = guide_legend(title=NULL))
+ggsave("scatter_GMKN_ROSN.png", width = 20, height = 10)
+ggplot(data = data_2018_2019_lnreturn_xts,aes(x=LNGMKN, y=LNSBER))+geom_point(color="black", alpha =0.5)+geom_smooth(method="loess",se = FALSE)+xlab("GMKN log-return")+ylab("SBER log-return")+theme(panel.background = element_rect(fill = "white",colour="lightgrey"),axis.text=element_text(size=30),axis.title=element_text(size=30),legend.position = "bottom") +guides(color = guide_legend(title=NULL))
+ggsave("scatter_GMKN_SBER.png", width = 20, height = 10)
+ggplot(data = data_2018_2019_lnreturn_xts,aes(x=LNGMKN, y=LNTATN))+geom_point(color="black", alpha =0.5)+geom_smooth(method="loess",se = FALSE)+xlab("GMKN log-return")+ylab("TATN log-return")+theme(panel.background = element_rect(fill = "white",colour="lightgrey"),axis.text=element_text(size=30),axis.title=element_text(size=30),legend.position = "bottom") +guides(color = guide_legend(title=NULL))
+ggsave("scatter_GMKN_TATN.png", width = 20, height = 10)
+ggplot(data = data_2018_2019_lnreturn_xts,aes(x=LNGMKN, y=LNYNDX))+geom_point(color="black", alpha =0.5)+geom_smooth(method="loess",se = FALSE)+xlab("GMKN log-return")+ylab("YNDX log-return")+theme(panel.background = element_rect(fill = "white",colour="lightgrey"),axis.text=element_text(size=30),axis.title=element_text(size=30),legend.position = "bottom") +guides(color = guide_legend(title=NULL))
+ggsave("scatter_GMKN_YNDX.png", width = 20, height = 10)
+ggplot(data = data_2018_2019_lnreturn_xts,aes(x=LNLKOH, y=LNMAGN))+geom_point(color="black", alpha =0.5)+geom_smooth(method="loess",se = FALSE)+xlab("LKOH log-return")+ylab("MAGN log-return")+theme(panel.background = element_rect(fill = "white",colour="lightgrey"),axis.text=element_text(size=30),axis.title=element_text(size=30),legend.position = "bottom") +guides(color = guide_legend(title=NULL))
+ggsave("scatter_LKOH_MAGN.png", width = 20, height = 10)
+ggplot(data = data_2018_2019_lnreturn_xts,aes(x=LNLKOH, y=LNPOLY))+geom_point(color="black", alpha =0.5)+geom_smooth(method="loess",se = FALSE)+xlab("LKOH log-return")+ylab("POLY log-return")+theme(panel.background = element_rect(fill = "white",colour="lightgrey"),axis.text=element_text(size=30),axis.title=element_text(size=30),legend.position = "bottom") +guides(color = guide_legend(title=NULL))
+ggsave("scatter_LKOH_POLY.png", width = 20, height = 10)
+ggplot(data = data_2018_2019_lnreturn_xts,aes(x=LNLKOH, y=LNROSN))+geom_point(color="black", alpha =0.5)+geom_smooth(method="loess",se = FALSE)+xlab("LKOH log-return")+ylab("ROSN log-return")+theme(panel.background = element_rect(fill = "white",colour="lightgrey"),axis.text=element_text(size=30),axis.title=element_text(size=30),legend.position = "bottom") +guides(color = guide_legend(title=NULL))
+ggsave("scatter_LKOH_ROSN.png", width = 20, height = 10)
+ggplot(data = data_2018_2019_lnreturn_xts,aes(x=LNLKOH, y=LNSBER))+geom_point(color="black", alpha =0.5)+geom_smooth(method="loess",se = FALSE)+xlab("LKOH log-return")+ylab("SBER log-return")+theme(panel.background = element_rect(fill = "white",colour="lightgrey"),axis.text=element_text(size=30),axis.title=element_text(size=30),legend.position = "bottom") +guides(color = guide_legend(title=NULL))
+ggsave("scatter_LKOH_SBER.png", width = 20, height = 10)
+ggplot(data = data_2018_2019_lnreturn_xts,aes(x=LNLKOH, y=LNTATN))+geom_point(color="black", alpha =0.5)+geom_smooth(method="loess",se = FALSE)+xlab("LKOH log-return")+ylab("TATN log-return")+theme(panel.background = element_rect(fill = "white",colour="lightgrey"),axis.text=element_text(size=30),axis.title=element_text(size=30),legend.position = "bottom") +guides(color = guide_legend(title=NULL))
+ggsave("scatter_LKOH_TATN.png", width = 20, height = 10)
+ggplot(data = data_2018_2019_lnreturn_xts,aes(x=LNLKOH, y=LNYNDX))+geom_point(color="black", alpha =0.5)+geom_smooth(method="loess",se = FALSE)+xlab("LKOH log-return")+ylab("YNDX log-return")+theme(panel.background = element_rect(fill = "white",colour="lightgrey"),axis.text=element_text(size=30),axis.title=element_text(size=30),legend.position = "bottom") +guides(color = guide_legend(title=NULL))
+ggsave("scatter_LKOH_YNDX.png", width = 20, height = 10)
+ggplot(data = data_2018_2019_lnreturn_xts,aes(x=LNMAGN, y=LNPOLY))+geom_point(color="black", alpha =0.5)+geom_smooth(method="loess",se = FALSE)+xlab("MAGN log-return")+ylab("POLY log-return")+theme(panel.background = element_rect(fill = "white",colour="lightgrey"),axis.text=element_text(size=30),axis.title=element_text(size=30),legend.position = "bottom") +guides(color = guide_legend(title=NULL))
+ggsave("scatter_MAGN_POLY.png", width = 20, height = 10)
+ggplot(data = data_2018_2019_lnreturn_xts,aes(x=LNMAGN, y=LNROSN))+geom_point(color="black", alpha =0.5)+geom_smooth(method="loess",se = FALSE)+xlab("MAGN log-return")+ylab("ROSN log-return")+theme(panel.background = element_rect(fill = "white",colour="lightgrey"),axis.text=element_text(size=30),axis.title=element_text(size=30),legend.position = "bottom") +guides(color = guide_legend(title=NULL))
+ggsave("scatter_MAGN_ROSN.png", width = 20, height = 10)
+ggplot(data = data_2018_2019_lnreturn_xts,aes(x=LNMAGN, y=LNSBER))+geom_point(color="black", alpha =0.5)+geom_smooth(method="loess",se = FALSE)+xlab("MAGN log-return")+ylab("SBER log-return")+theme(panel.background = element_rect(fill = "white",colour="lightgrey"),axis.text=element_text(size=30),axis.title=element_text(size=30),legend.position = "bottom") +guides(color = guide_legend(title=NULL))
+ggsave("scatter_MAGN_SBER.png", width = 20, height = 10)
+ggplot(data = data_2018_2019_lnreturn_xts,aes(x=LNMAGN, y=LNTATN))+geom_point(color="black", alpha =0.5)+geom_smooth(method="loess",se = FALSE)+xlab("MAGN log-return")+ylab("TATN log-return")+theme(panel.background = element_rect(fill = "white",colour="lightgrey"),axis.text=element_text(size=30),axis.title=element_text(size=30),legend.position = "bottom") +guides(color = guide_legend(title=NULL))
+ggsave("scatter_MAGN_TATN.png", width = 20, height = 10)
+ggplot(data = data_2018_2019_lnreturn_xts,aes(x=LNMAGN, y=LNYNDX))+geom_point(color="black", alpha =0.5)+geom_smooth(method="loess",se = FALSE)+xlab("MAGN log-return")+ylab("YNDX log-return")+theme(panel.background = element_rect(fill = "white",colour="lightgrey"),axis.text=element_text(size=30),axis.title=element_text(size=30),legend.position = "bottom") +guides(color = guide_legend(title=NULL))
+ggsave("scatter_MAGN_YNDX.png", width = 20, height = 10)
+ggplot(data = data_2018_2019_lnreturn_xts,aes(x=LNPOLY, y=LNROSN))+geom_point(color="black", alpha =0.5)+geom_smooth(method="loess",se = FALSE)+xlab("POLY log-return")+ylab("ROSN log-return")+theme(panel.background = element_rect(fill = "white",colour="lightgrey"),axis.text=element_text(size=30),axis.title=element_text(size=30),legend.position = "bottom") +guides(color = guide_legend(title=NULL))
+ggsave("scatter_POLY_ROSN.png", width = 20, height = 10)
+ggplot(data = data_2018_2019_lnreturn_xts,aes(x=LNPOLY, y=LNSBER))+geom_point(color="black", alpha =0.5)+geom_smooth(method="loess",se = FALSE)+xlab("POLY log-return")+ylab("SBER log-return")+theme(panel.background = element_rect(fill = "white",colour="lightgrey"),axis.text=element_text(size=30),axis.title=element_text(size=30),legend.position = "bottom") +guides(color = guide_legend(title=NULL))
+ggsave("scatter_POLY_SBER.png", width = 20, height = 10)
+ggplot(data = data_2018_2019_lnreturn_xts,aes(x=LNPOLY, y=LNTATN))+geom_point(color="black", alpha =0.5)+geom_smooth(method="loess",se = FALSE)+xlab("POLY log-return")+ylab("TATN log-return")+theme(panel.background = element_rect(fill = "white",colour="lightgrey"),axis.text=element_text(size=30),axis.title=element_text(size=30),legend.position = "bottom") +guides(color = guide_legend(title=NULL))
+ggsave("scatter_POLY_TATN.png", width = 20, height = 10)
+ggplot(data = data_2018_2019_lnreturn_xts,aes(x=LNPOLY, y=LNYNDX))+geom_point(color="black", alpha =0.5)+geom_smooth(method="loess",se = FALSE)+xlab("POLY log-return")+ylab("YNDX log-return")+theme(panel.background = element_rect(fill = "white",colour="lightgrey"),axis.text=element_text(size=30),axis.title=element_text(size=30),legend.position = "bottom") +guides(color = guide_legend(title=NULL))
+ggsave("scatter_POLY_YNDX.png", width = 20, height = 10)
+ggplot(data = data_2018_2019_lnreturn_xts,aes(x=LNROSN, y=LNSBER))+geom_point(color="black", alpha =0.5)+geom_smooth(method="loess",se = FALSE)+xlab("ROSN log-return")+ylab("SBER log-return")+theme(panel.background = element_rect(fill = "white",colour="lightgrey"),axis.text=element_text(size=30),axis.title=element_text(size=30),legend.position = "bottom") +guides(color = guide_legend(title=NULL))
+ggsave("scatter_ROSN_SBER.png", width = 20, height = 10)
+ggplot(data = data_2018_2019_lnreturn_xts,aes(x=LNROSN, y=LNTATN))+geom_point(color="black", alpha =0.5)+geom_smooth(method="loess",se = FALSE)+xlab("ROSN log-return")+ylab("TATN log-return")+theme(panel.background = element_rect(fill = "white",colour="lightgrey"),axis.text=element_text(size=30),axis.title=element_text(size=30),legend.position = "bottom") +guides(color = guide_legend(title=NULL))
+ggsave("scatter_ROSN_TATN.png", width = 20, height = 10)
+ggplot(data = data_2018_2019_lnreturn_xts,aes(x=LNROSN, y=LNYNDX))+geom_point(color="black", alpha =0.5)+geom_smooth(method="loess",se = FALSE)+xlab("ROSN log-return")+ylab("YNDX log-return")+theme(panel.background = element_rect(fill = "white",colour="lightgrey"),axis.text=element_text(size=30),axis.title=element_text(size=30),legend.position = "bottom") +guides(color = guide_legend(title=NULL))
+ggsave("scatter_ROSN_YNDX.png", width = 20, height = 10)
+ggplot(data = data_2018_2019_lnreturn_xts,aes(x=LNSBER, y=LNTATN))+geom_point(color="black", alpha =0.5)+geom_smooth(method="loess",se = FALSE)+xlab("SBER log-return")+ylab("TATN log-return")+theme(panel.background = element_rect(fill = "white",colour="lightgrey"),axis.text=element_text(size=30),axis.title=element_text(size=30),legend.position = "bottom") +guides(color = guide_legend(title=NULL))
+ggsave("scatter_SBER_TATN.png", width = 20, height = 10)
+ggplot(data = data_2018_2019_lnreturn_xts,aes(x=LNSBER, y=LNYNDX))+geom_point(color="black", alpha =0.5)+geom_smooth(method="loess",se = FALSE)+xlab("SBER log-return")+ylab("YNDX log-return")+theme(panel.background = element_rect(fill = "white",colour="lightgrey"),axis.text=element_text(size=30),axis.title=element_text(size=30),legend.position = "bottom") +guides(color = guide_legend(title=NULL))
+ggsave("scatter_SBER_YNDX.png", width = 20, height = 10)
+ggplot(data = data_2018_2019_lnreturn_xts,aes(x=LNTATN, y=LNYNDX))+geom_point(color="black", alpha =0.5)+geom_smooth(method="loess",se = FALSE)+xlab("TATN log-return")+ylab("YNDX log-return")+theme(panel.background = element_rect(fill = "white",colour="lightgrey"),axis.text=element_text(size=30),axis.title=element_text(size=30),legend.position = "bottom") +guides(color = guide_legend(title=NULL))
+ggsave("scatter_TATN_YNDX.png", width = 20, height = 10)
+```
+
+
+#modeling stage
+#We start from choosing the optimal ARMAX(p,q)-GJR-GARCHX(m,s) or ARMAX(p,q)-EGARCHX(m,s) model for each stock and period.
+#We write custom function "best_model_gjr_fit" in order to choose the optimal ARMAX(p,q)-GJR-GARCHX(m,s) model for each stock and period. This function has 6 parameters: x - data, p,q,m,s - parameters for model, period_num - period number. The function returns table with 5 best models based on the minimum AIC.
+```{r}
+best_model_gjr_fit <- function(x, p, q, m, s, period_num) {
+  models_num <- length(seq(0,p))*length(seq(0,q))*length(seq(1,m))*length(seq(1,s))
+  M <- matrix (0, nrow = models_num, ncol = 7)
+  i = 1
+    for (p_par in 0:p) {
+      for (q_par in 0:q) {
+        for (m_par in 1:m) {
+          for (s_par in 1:s) {
+            model <- ugarchspec(variance.model = list(model = "gjrGARCH", garchOrder = c(m_par, s_par),external.regressors = coredata(data_2018_2019_lnreturn_xts)[calendar[period_num,8,drop=TRUE]:calendar[period_num,9,drop=TRUE],12:15]), mean.model = list(armaOrder = c(p_par, q_par),external.regressors = coredata(data_2018_2019_lnreturn_xts)[calendar[period_num,8,drop=TRUE]:calendar[period_num,9,drop=TRUE],12:15]))
+            model_est<-tryCatch(ugarchfit(spec=model,data=x, solver = 'gosolnp', solver.control = list(rseed = 423, n.restarts = 2)), error=function(e) return(NULL))
+            if (is.null(model_est)) {
+            M[i,1] = p_par
+            M[i,2] = q_par
+            M[i,3] = m_par
+            M[i,4] = s_par
+            M[i,5] = "."
+            M[i,6] = "."
+            M[i,7] = "gjr"
+            i = i + 1
+            next
+            }else if (convergence(model_est) == 1|is.null(model_est@fit$cvar)){
+            M[i,1] = p_par
+            M[i,2] = q_par
+            M[i,3] = m_par
+            M[i,4] = s_par
+            M[i,5] = "."
+            M[i,6] = "."
+            M[i,7] = "gjr"
+            i = i + 1  
+            next
+            }else{
+            M[i,1] = p_par
+            M[i,2] = q_par
+            M[i,3] = m_par
+            M[i,4] = s_par
+            M[i,5] = Box.test(residuals(model_est, standardize = TRUE), lag = 11, type = c("Ljung-Box"),fitdf=0)$p.value
+            M[i,6] = infocriteria(model_est)[1]
+            M[i,7] = "gjr"
+            i = i + 1
+            }
+          }
+        }
+      }
+    }
+all_models_gjr<-data.frame(M)
+colnames(all_models_gjr)<-c("p", "q", "m", "s", "Box.test_p-value", "AIC", "type")
+write.xlsx(all_models_gjr, paste(names(x), "_all_models_gjr", period_num, ".xlsx"))
+best_model_gjr<-all_models_gjr%>%filter(`Box.test_p-value`!=".")%>%filter(as.numeric(`Box.test_p-value`)>=0.1)%>%arrange(as.numeric(AIC))
+best_model_gjr<-best_model_gjr[1:5,]
+write.xlsx(best_model_gjr, paste(names(x), "_best_models_gjr", period_num, ".xlsx"))
+return(best_model_gjr)
+}
+```
+
+
+#We write custom function "best_model_e_fit" in order to choose the optimal ARMAX(p,q)-EGARCHX(m,s) model for each stock and period. This function has 6 parameters: x - data, p,q,m,s - parameters for model, period_num - period number. The function returns table with 5 best models based on the minimum AIC.
+```{r}
+best_model_e_fit <- function(x, p, q, m, s, period_num) {
+  models_num <- length(seq(0,p))*length(seq(0,q))*length(seq(1,m))*length(seq(1,s))
+  M <- matrix (0, nrow = models_num, ncol = 7)
+  i = 1
+    for (p_par in 0:p) {
+      for (q_par in 0:q) {
+        for (m_par in 1:m) {
+          for (s_par in 1:s) {
+            model <- ugarchspec(variance.model = list(model = "eGARCH", garchOrder = c(m_par, s_par),external.regressors = coredata(data_2018_2019_lnreturn_xts)[calendar[period_num,8,drop=TRUE]:calendar[period_num,9,drop=TRUE],12:15]), mean.model = list(armaOrder = c(p_par, q_par),external.regressors = coredata(data_2018_2019_lnreturn_xts)[calendar[period_num,8,drop=TRUE]:calendar[period_num,9,drop=TRUE],12:15]))
+            model_est<-tryCatch(ugarchfit(spec=model,data=x, solver = 'gosolnp', solver.control = list(rseed = 423, n.restarts = 2)), error=function(e) return(NULL))
+            if (is.null(model_est)) {
+            M[i,1] = p_par
+            M[i,2] = q_par
+            M[i,3] = m_par
+            M[i,4] = s_par
+            M[i,5] = "."
+            M[i,6] = "."
+            M[i,7] = "e"
+            i = i + 1
+            next
+            }else if(convergence(model_est) == 1|is.null(model_est@fit$cvar)){
+            M[i,1] = p_par
+            M[i,2] = q_par
+            M[i,3] = m_par
+            M[i,4] = s_par
+            M[i,5] = "."
+            M[i,6] = "."
+            M[i,7] = "e"
+            i = i + 1
+            next 
+            }else{
+            M[i,1] = p_par
+            M[i,2] = q_par
+            M[i,3] = m_par
+            M[i,4] = s_par
+            M[i,5] = Box.test(residuals(model_est, standardize = TRUE), lag = 11, type = c("Ljung-Box"), fitdf=0)$p.value
+            M[i,6] = infocriteria(model_est)[1]
+            M[i,7] = "e"
+            i = i + 1
+            }
+          }
+        }
+      }
+    }
+all_models_e<-data.frame(M)
+colnames(all_models_e)<-c("p", "q", "m", "s", "Box.test_p-value", "AIC", "type")
+write.xlsx(all_models_e, paste(names(x), "_all_models_e", period_num, ".xlsx"))
+best_model_e<-all_models_e%>%filter(`Box.test_p-value`!=".")%>%filter(as.numeric(`Box.test_p-value`)>=0.1)%>% arrange(as.numeric(AIC))
+best_model_e<-best_model_e[1:5,]
+write.xlsx(best_model_e, paste(names(x), "_best_model_e", period_num, ".xlsx"))
+return(best_model_e)
+}
+```
+
+
+#We write custom function "total_best_model" in order to choose the optimal model for each stock and period from 10 different models from the previous step. This function has 2 parameters. The function returns table with the best model based on the minimum MSE.
+```{r}
+total_best_model <- function(data, period_num) {
+  data_vec <- data[calendar[period_num,8,drop=TRUE]:calendar[period_num,11,drop=TRUE]]
+  best_gjr <- best_model_gjr_fit(data[calendar[period_num,8,drop=TRUE]:calendar[period_num,9,drop=TRUE]], 10, 10, 2, 2, period_num)
+  best_e <- best_model_e_fit(data[calendar[period_num,8,drop=TRUE]:calendar[period_num,9,drop=TRUE]], 10, 10, 2, 2, period_num)
+  all_together <- rbind(best_gjr, best_e)
+  write.xlsx(all_together, paste(names(data_vec), "_all_together", period_num, ".xlsx"))
+  M <- matrix(0, nrow = nrow(all_together), ncol = 6)
+  for (i in 1:nrow(all_together)) {
+    if (all_together[i,7] == "gjr") {
+      model <- ugarchspec(variance.model = list(model = "gjrGARCH", garchOrder = c(as.integer(all_together[i,3]), as.integer(all_together[i,4])),external.regressors = coredata(data_2018_2019_lnreturn_xts)[calendar[period_num,8,drop=TRUE]:calendar[period_num,11,drop=TRUE],12:15]), mean.model = list(armaOrder = c(as.integer(all_together[i,1]), as.integer(all_together[i,2])),external.regressors = coredata(data_2018_2019_lnreturn_xts)[calendar[period_num,8,drop=TRUE]:calendar[period_num,11,drop=TRUE],12:15]))
+      model_est<-ugarchfit(spec=model,data=data_vec, out.sample = calendar[period_num,14,drop=TRUE], solver = 'gosolnp', solver.control = list(rseed = 423, n.restarts = 2))
+      forcast_est <- tryCatch(ugarchforecast(model_est, n.ahead = 1, n.roll = calendar[period_num,14,drop=TRUE], out.sample = calendar[period_num,14,drop=TRUE]), error=function(e) return(NULL))
+      if (is.null(forcast_est)) {
+      M[i,1] = as.integer(all_together[i,1])
+      M[i,2] = as.integer(all_together[i,2])
+      M[i,3] = as.integer(all_together[i,3])
+      M[i,4] = as.integer(all_together[i,4])
+      M[i,5] = "."
+      M[i,6] = "gjr"
+      }else{
+      M[i,1] = as.integer(all_together[i,1])
+      M[i,2] = as.integer(all_together[i,2])
+      M[i,3] = as.integer(all_together[i,3])
+      M[i,4] = as.integer(all_together[i,4])
+      M[i,5] = fpm(forcast_est)[1,1]
+      M[i,6] = "gjr"  
+      }
+    } else {
+      model <- ugarchspec(variance.model = list(model = "eGARCH", garchOrder = c(as.integer(all_together[i,3]), as.integer(all_together[i,4])),external.regressors = coredata(data_2018_2019_lnreturn_xts)[calendar[period_num,8,drop=TRUE]:calendar[period_num,11,drop=TRUE],12:15]), mean.model = list(armaOrder = c(as.integer(all_together[i,1]), as.integer(all_together[i,2])),external.regressors = coredata(data_2018_2019_lnreturn_xts)[calendar[period_num,8,drop=TRUE]:calendar[period_num,11,drop=TRUE],12:15]))
+      model_est<-ugarchfit(spec=model,data=data_vec, out.sample = calendar[period_num,14,drop=TRUE], solver = 'gosolnp', solver.control = list(rseed = 423, n.restarts = 2))
+      forcast_est <- tryCatch(ugarchforecast(model_est, n.ahead = 1, n.roll = calendar[period_num,14,drop=TRUE], out.sample = calendar[period_num,14,drop=TRUE]), error=function(e) return(NULL))
+      if(is.null(forcast_est)) {
+      M[i,1] = as.integer(all_together[i,1])
+      M[i,2] = as.integer(all_together[i,2])
+      M[i,3] = as.integer(all_together[i,3])
+      M[i,4] = as.integer(all_together[i,4])
+      M[i,5] = "."
+      M[i,6] = "e"
+      }else{
+      M[i,1] = as.integer(all_together[i,1])
+      M[i,2] = as.integer(all_together[i,2])
+      M[i,3] = as.integer(all_together[i,3])
+      M[i,4] = as.integer(all_together[i,4])
+      M[i,5] = fpm(forcast_est)[1,1]
+      M[i,6] = "e"
+      }
+    }
+  }
+  final<-data.frame(M)
+  colnames(final)<-c("p", "q", "m", "s", "MSE", "type")
+  final<-final%>%filter(MSE != "." & MSE != "NaN")
+  final<-final%>%arrange(as.numeric(MSE))
+  write.xlsx(final, paste(names(data_vec), "_total_MSE", period_num, ".xlsx"))
+  final<-final[1,]
+  write.xlsx(final, paste(names(data_vec), "_total_1", period_num, ".xlsx"))
+  return(final)
+}
+```
+
+#let's find the best model for the dynamics of log-return for each of 10 stocks and each of 12 periods. In order to make our computations faster we parallel our calculations on 2 cores. The resulting tables are downloaded to the local computer.
+```{r}
+cl <- makeCluster(2)
+registerDoParallel(cl)
+#for the 1st period
+foreach(i = 1:2, .packages = c("rugarch", "stats", "dplyr", "openxlsx", "xts")) %dopar% 
+  total_best_model(data_2018_2019_lnreturn_xts[,i],1)
+foreach(i = 3:4, .packages = c("rugarch", "stats", "dplyr", "openxlsx", "xts")) %dopar% 
+  total_best_model(data_2018_2019_lnreturn_xts[,i],1)
+foreach(i = 5:6, .packages = c("rugarch", "stats", "dplyr", "openxlsx", "xts")) %dopar% 
+  total_best_model(data_2018_2019_lnreturn_xts[,i],1)
+foreach(i = 7:8, .packages = c("rugarch", "stats", "dplyr", "openxlsx", "xts")) %dopar% 
+  total_best_model(data_2018_2019_lnreturn_xts[,i],1)
+foreach(i = 9:10, .packages = c("rugarch", "stats", "dplyr", "openxlsx", "xts")) %dopar% 
+  total_best_model(data_2018_2019_lnreturn_xts[,i],1)
+#for the 2nd period
+foreach(i = 1:2, .packages = c("rugarch", "stats", "dplyr", "openxlsx", "xts")) %dopar% 
+  total_best_model(data_2018_2019_lnreturn_xts[,i],2)
+foreach(i = 3:4, .packages = c("rugarch", "stats", "dplyr", "openxlsx", "xts")) %dopar% 
+  total_best_model(data_2018_2019_lnreturn_xts[,i],2)
+foreach(i = 5:6, .packages = c("rugarch", "stats", "dplyr", "openxlsx", "xts")) %dopar% 
+  total_best_model(data_2018_2019_lnreturn_xts[,i],2)
+foreach(i = 7:8, .packages = c("rugarch", "stats", "dplyr", "openxlsx", "xts")) %dopar% 
+  total_best_model(data_2018_2019_lnreturn_xts[,i],2)
+foreach(i = 9:10, .packages = c("rugarch", "stats", "dplyr", "openxlsx", "xts")) %dopar% 
+  total_best_model(data_2018_2019_lnreturn_xts[,i],2)
+#for the 3rd period
+foreach(i = 1:2, .packages = c("rugarch", "stats", "dplyr", "openxlsx", "xts")) %dopar% 
+  total_best_model(data_2018_2019_lnreturn_xts[,i],3)
+foreach(i = 3:4, .packages = c("rugarch", "stats", "dplyr", "openxlsx", "xts")) %dopar% 
+  total_best_model(data_2018_2019_lnreturn_xts[,i],3)
+foreach(i = 5:6, .packages = c("rugarch", "stats", "dplyr", "openxlsx", "xts")) %dopar% 
+  total_best_model(data_2018_2019_lnreturn_xts[,i],3)
+foreach(i = 7:8, .packages = c("rugarch", "stats", "dplyr", "openxlsx", "xts")) %dopar% 
+  total_best_model(data_2018_2019_lnreturn_xts[,i],3)
+foreach(i = 9:10, .packages = c("rugarch", "stats", "dplyr", "openxlsx", "xts")) %dopar% 
+  total_best_model(data_2018_2019_lnreturn_xts[,i],3)
+#for the 4th period
+foreach(i = 1:2, .packages = c("rugarch", "stats", "dplyr", "openxlsx", "xts")) %dopar% 
+  total_best_model(data_2018_2019_lnreturn_xts[,i],4)
+foreach(i = 3:4, .packages = c("rugarch", "stats", "dplyr", "openxlsx", "xts")) %dopar% 
+  total_best_model(data_2018_2019_lnreturn_xts[,i],4)
+foreach(i = 5:6, .packages = c("rugarch", "stats", "dplyr", "openxlsx", "xts")) %dopar% 
+  total_best_model(data_2018_2019_lnreturn_xts[,i],4)
+foreach(i = 7:8, .packages = c("rugarch", "stats", "dplyr", "openxlsx", "xts")) %dopar% 
+  total_best_model(data_2018_2019_lnreturn_xts[,i],4)
+foreach(i = 9:10, .packages = c("rugarch", "stats", "dplyr", "openxlsx", "xts")) %dopar% 
+  total_best_model(data_2018_2019_lnreturn_xts[,i],4)
+#for the 5th period
+foreach(i = 1:2, .packages = c("rugarch", "stats", "dplyr", "openxlsx", "xts")) %dopar% 
+  total_best_model(data_2018_2019_lnreturn_xts[,i],5)
+foreach(i = 3:4, .packages = c("rugarch", "stats", "dplyr", "openxlsx", "xts")) %dopar% 
+  total_best_model(data_2018_2019_lnreturn_xts[,i],5)
+foreach(i = 5:6, .packages = c("rugarch", "stats", "dplyr", "openxlsx", "xts")) %dopar% 
+  total_best_model(data_2018_2019_lnreturn_xts[,i],5)
+foreach(i = 7:8, .packages = c("rugarch", "stats", "dplyr", "openxlsx", "xts")) %dopar% 
+  total_best_model(data_2018_2019_lnreturn_xts[,i],5)
+foreach(i = 9:10, .packages = c("rugarch", "stats", "dplyr", "openxlsx", "xts")) %dopar% 
+  total_best_model(data_2018_2019_lnreturn_xts[,i],5)
+#for the 6th period
+foreach(i = 1:2, .packages = c("rugarch", "stats", "dplyr", "openxlsx", "xts")) %dopar% 
+  total_best_model(data_2018_2019_lnreturn_xts[,i],6)
+foreach(i = 3:4, .packages = c("rugarch", "stats", "dplyr", "openxlsx", "xts")) %dopar% 
+  total_best_model(data_2018_2019_lnreturn_xts[,i],6)
+foreach(i = 5:6, .packages = c("rugarch", "stats", "dplyr", "openxlsx", "xts")) %dopar% 
+  total_best_model(data_2018_2019_lnreturn_xts[,i],6)
+foreach(i = 7:8, .packages = c("rugarch", "stats", "dplyr", "openxlsx", "xts")) %dopar% 
+  total_best_model(data_2018_2019_lnreturn_xts[,i],6)
+foreach(i = 9:10, .packages = c("rugarch", "stats", "dplyr", "openxlsx", "xts")) %dopar% 
+  total_best_model(data_2018_2019_lnreturn_xts[,i],6)
+#for the 7th period
+foreach(i = 1:2, .packages = c("rugarch", "stats", "dplyr", "openxlsx", "xts")) %dopar% 
+  total_best_model(data_2018_2019_lnreturn_xts[,i],7)
+foreach(i = 3:4, .packages = c("rugarch", "stats", "dplyr", "openxlsx", "xts")) %dopar% 
+  total_best_model(data_2018_2019_lnreturn_xts[,i],7)
+foreach(i = 5:6, .packages = c("rugarch", "stats", "dplyr", "openxlsx", "xts")) %dopar% 
+  total_best_model(data_2018_2019_lnreturn_xts[,i],7)
+foreach(i = 7:8, .packages = c("rugarch", "stats", "dplyr", "openxlsx", "xts")) %dopar% 
+  total_best_model(data_2018_2019_lnreturn_xts[,i],7)
+foreach(i = 9:10, .packages = c("rugarch", "stats", "dplyr", "openxlsx", "xts")) %dopar% 
+  total_best_model(data_2018_2019_lnreturn_xts[,i],7)
+#for the 8th period
+foreach(i = 1:2, .packages = c("rugarch", "stats", "dplyr", "openxlsx", "xts")) %dopar% 
+  total_best_model(data_2018_2019_lnreturn_xts[,i],8)
+foreach(i = 3:4, .packages = c("rugarch", "stats", "dplyr", "openxlsx", "xts")) %dopar% 
+  total_best_model(data_2018_2019_lnreturn_xts[,i],8)
+foreach(i = 5:6, .packages = c("rugarch", "stats", "dplyr", "openxlsx", "xts")) %dopar% 
+  total_best_model(data_2018_2019_lnreturn_xts[,i],8)
+foreach(i = 7:8, .packages = c("rugarch", "stats", "dplyr", "openxlsx", "xts")) %dopar% 
+  total_best_model(data_2018_2019_lnreturn_xts[,i],8)
+foreach(i = 9:10, .packages = c("rugarch", "stats", "dplyr", "openxlsx", "xts")) %dopar% 
+  total_best_model(data_2018_2019_lnreturn_xts[,i],8)
+#for the 9th period
+foreach(i = 1:2, .packages = c("rugarch", "stats", "dplyr", "openxlsx", "xts")) %dopar% 
+  total_best_model(data_2018_2019_lnreturn_xts[,i],9)
+foreach(i = 3:4, .packages = c("rugarch", "stats", "dplyr", "openxlsx", "xts")) %dopar% 
+  total_best_model(data_2018_2019_lnreturn_xts[,i],9)
+foreach(i = 5:6, .packages = c("rugarch", "stats", "dplyr", "openxlsx", "xts")) %dopar% 
+  total_best_model(data_2018_2019_lnreturn_xts[,i],9)
+foreach(i = 7:8, .packages = c("rugarch", "stats", "dplyr", "openxlsx", "xts")) %dopar% 
+  total_best_model(data_2018_2019_lnreturn_xts[,i],9)
+foreach(i = 9:10, .packages = c("rugarch", "stats", "dplyr", "openxlsx", "xts")) %dopar% 
+  total_best_model(data_2018_2019_lnreturn_xts[,i],9)
+#for the 10th period
+foreach(i = 1:2, .packages = c("rugarch", "stats", "dplyr", "openxlsx", "xts")) %dopar% 
+  total_best_model(data_2018_2019_lnreturn_xts[,i],10)
+foreach(i = 3:4, .packages = c("rugarch", "stats", "dplyr", "openxlsx", "xts")) %dopar% 
+  total_best_model(data_2018_2019_lnreturn_xts[,i],10)
+foreach(i = 5:6, .packages = c("rugarch", "stats", "dplyr", "openxlsx", "xts")) %dopar% 
+  total_best_model(data_2018_2019_lnreturn_xts[,i],10)
+foreach(i = 7:8, .packages = c("rugarch", "stats", "dplyr", "openxlsx", "xts")) %dopar% 
+  total_best_model(data_2018_2019_lnreturn_xts[,i],10)
+foreach(i = 9:10, .packages = c("rugarch", "stats", "dplyr", "openxlsx", "xts")) %dopar% 
+  total_best_model(data_2018_2019_lnreturn_xts[,i],10)
+#for the 11 period
+foreach(i = 1:2, .packages = c("rugarch", "stats", "dplyr", "openxlsx", "xts")) %dopar% 
+  total_best_model(data_2018_2019_lnreturn_xts[,i],11)
+foreach(i = 3:4, .packages = c("rugarch", "stats", "dplyr", "openxlsx", "xts")) %dopar% 
+  total_best_model(data_2018_2019_lnreturn_xts[,i],11)
+foreach(i = 5:6, .packages = c("rugarch", "stats", "dplyr", "openxlsx", "xts")) %dopar% 
+  total_best_model(data_2018_2019_lnreturn_xts[,i],11)
+foreach(i = 7:8, .packages = c("rugarch", "stats", "dplyr", "openxlsx", "xts")) %dopar% 
+  total_best_model(data_2018_2019_lnreturn_xts[,i],11)
+foreach(i = 9:10, .packages = c("rugarch", "stats", "dplyr", "openxlsx", "xts")) %dopar% 
+  total_best_model(data_2018_2019_lnreturn_xts[,i],11)
+#for the 12 period
+foreach(i = 1:2, .packages = c("rugarch", "stats", "dplyr", "openxlsx", "xts")) %dopar% 
+  total_best_model(data_2018_2019_lnreturn_xts[,i],12)
+foreach(i = 3:4, .packages = c("rugarch", "stats", "dplyr", "openxlsx", "xts")) %dopar% 
+  total_best_model(data_2018_2019_lnreturn_xts[,i],12)
+foreach(i = 5:6, .packages = c("rugarch", "stats", "dplyr", "openxlsx", "xts")) %dopar% 
+  total_best_model(data_2018_2019_lnreturn_xts[,i],12)
+foreach(i = 7:8, .packages = c("rugarch", "stats", "dplyr", "openxlsx", "xts")) %dopar% 
+  total_best_model(data_2018_2019_lnreturn_xts[,i],12)
+foreach(i = 9:10, .packages = c("rugarch", "stats", "dplyr", "openxlsx", "xts")) %dopar% 
+  total_best_model(data_2018_2019_lnreturn_xts[,i],12)
+```
+
+#let's download from the previous step the final tables with the best model for each stock and each period
+#for the 1st period
+```{r}
+LNAFKS_final_model_1 <- read_excel("C:/Users/Лиза/Downloads/1 period/LNAFKS _total_1 1 .xlsx")
+LNGAZP_final_model_1 <- read_excel("C:/Users/Лиза/Downloads/1 period/LNGAZP _total_1 1 .xlsx")
+LNGMKN_final_model_1 <- read_excel("C:/Users/Лиза/Downloads/1 period/LNGMKN _total_1 1 .xlsx")
+LNLKOH_final_model_1 <- read_excel("C:/Users/Лиза/Downloads/1 period/LNLKOH _total_1 1 .xlsx")
+LNMAGN_final_model_1 <- read_excel("C:/Users/Лиза/Downloads/1 period/LNMAGN _total_1 1 .xlsx")
+LNPOLY_final_model_1 <- read_excel("C:/Users/Лиза/Downloads/1 period/LNPOLY _total_1 1 .xlsx")
+LNROSN_final_model_1 <- read_excel("C:/Users/Лиза/Downloads/1 period/LNROSN _total_1 1 .xlsx")
+LNSBER_final_model_1 <- read_excel("C:/Users/Лиза/Downloads/1 period/LNSBER _total_1 1 .xlsx")
+LNTATN_final_model_1 <- read_excel("C:/Users/Лиза/Downloads/1 period/LNTATN _total_1 1 .xlsx")
+LNYNDX_final_model_1 <- read_excel("C:/Users/Лиза/Downloads/1 period/LNYNDX _total_1 1 .xlsx")
+final_models_table_1 <- rbind(LNAFKS_final_model_1, LNGAZP_final_model_1, LNGMKN_final_model_1, LNLKOH_final_model_1, LNMAGN_final_model_1, LNPOLY_final_model_1, LNROSN_final_model_1, LNSBER_final_model_1, LNTATN_final_model_1, LNYNDX_final_model_1)
+rownames(final_models_table_1) <- c("LNAFKS", "LNGAZP", "LNGMKN", "LNLKOH", "LNMAGN", "LNPOLY", "LNROSN", "LNSBER", "LNTATN", "LNYNDX")
+```
+
+#for the 2nd period
+```{r}
+LNAFKS_final_model_2 <- read_excel("C:/Users/Лиза/Downloads/2 period/LNAFKS _total_1 2 .xlsx")
+LNGAZP_final_model_2 <- read_excel("C:/Users/Лиза/Downloads/2 period/LNGAZP _total_1 2 .xlsx")
+LNGMKN_final_model_2 <- read_excel("C:/Users/Лиза/Downloads/2 period/LNGMKN _total_1 2 .xlsx")
+LNLKOH_final_model_2 <- read_excel("C:/Users/Лиза/Downloads/2 period/LNLKOH _total_1 2 .xlsx")
+LNMAGN_final_model_2 <- read_excel("C:/Users/Лиза/Downloads/2 period/LNMAGN _total_1 2 .xlsx")
+LNPOLY_final_model_2 <- read_excel("C:/Users/Лиза/Downloads/2 period/LNPOLY _total_1 2 .xlsx")
+LNROSN_final_model_2 <- read_excel("C:/Users/Лиза/Downloads/2 period/LNROSN _total_1 2 .xlsx")
+LNSBER_final_model_2 <- read_excel("C:/Users/Лиза/Downloads/2 period/LNSBER _total_1 2 .xlsx")
+LNTATN_final_model_2 <- read_excel("C:/Users/Лиза/Downloads/2 period/LNTATN _total_1 2 .xlsx")
+LNYNDX_final_model_2 <- read_excel("C:/Users/Лиза/Downloads/2 period/LNYNDX _total_1 2 .xlsx")
+final_models_table_2 <- rbind(LNAFKS_final_model_2, LNGAZP_final_model_2, LNGMKN_final_model_2, LNLKOH_final_model_2, LNMAGN_final_model_2, LNPOLY_final_model_2, LNROSN_final_model_2, LNSBER_final_model_2, LNTATN_final_model_2, LNYNDX_final_model_2)
+rownames(final_models_table_2) <- c("LNAFKS", "LNGAZP", "LNGMKN", "LNLKOH", "LNMAGN", "LNPOLY", "LNROSN", "LNSBER", "LNTATN", "LNYNDX")
+```
+
+#for the 3rd period
+```{r}
+LNAFKS_final_model_3 <- read_excel("C:/Users/Лиза/Downloads/3 period/LNAFKS _total_1 3 .xlsx")
+LNGAZP_final_model_3 <- read_excel("C:/Users/Лиза/Downloads/3 period/LNGAZP _total_1 3 .xlsx")
+LNGMKN_final_model_3 <- read_excel("C:/Users/Лиза/Downloads/3 period/LNGMKN _total_1 3 .xlsx")
+LNLKOH_final_model_3 <- read_excel("C:/Users/Лиза/Downloads/3 period/LNLKOH _total_1 3 .xlsx")
+LNMAGN_final_model_3 <- read_excel("C:/Users/Лиза/Downloads/3 period/LNMAGN _total_1 3 .xlsx")
+LNPOLY_final_model_3 <- read_excel("C:/Users/Лиза/Downloads/3 period/LNPOLY _total_1 3 .xlsx")
+LNROSN_final_model_3 <- read_excel("C:/Users/Лиза/Downloads/3 period/LNROSN _total_1 3 .xlsx")
+LNSBER_final_model_3 <- read_excel("C:/Users/Лиза/Downloads/3 period/LNSBER _total_1 3 .xlsx")
+LNTATN_final_model_3 <- read_excel("C:/Users/Лиза/Downloads/3 period/LNTATN _total_1 3 .xlsx")
+LNYNDX_final_model_3 <- read_excel("C:/Users/Лиза/Downloads/3 period/LNYNDX _total_1 3 .xlsx")
+final_models_table_3 <- rbind(LNAFKS_final_model_3, LNGAZP_final_model_3, LNGMKN_final_model_3, LNLKOH_final_model_3, LNMAGN_final_model_3, LNPOLY_final_model_3, LNROSN_final_model_3, LNSBER_final_model_3, LNTATN_final_model_3, LNYNDX_final_model_3)
+rownames(final_models_table_3) <- c("LNAFKS", "LNGAZP", "LNGMKN", "LNLKOH", "LNMAGN", "LNPOLY", "LNROSN", "LNSBER", "LNTATN", "LNYNDX")
+```
+
+#for the 4th period
+```{r}
+LNAFKS_final_model_4 <- read_excel("C:/Users/Лиза/Downloads/4 period/LNAFKS _total_1 4 .xlsx")
+LNGAZP_final_model_4 <- read_excel("C:/Users/Лиза/Downloads/4 period/LNGAZP _total_1 4 .xlsx")
+LNGMKN_final_model_4 <- read_excel("C:/Users/Лиза/Downloads/4 period/LNGMKN _total_1 4 .xlsx")
+LNLKOH_final_model_4 <- read_excel("C:/Users/Лиза/Downloads/4 period/LNLKOH _total_1 4 .xlsx")
+LNMAGN_final_model_4 <- read_excel("C:/Users/Лиза/Downloads/4 period/LNMAGN _total_1 4 .xlsx")
+LNPOLY_final_model_4 <- read_excel("C:/Users/Лиза/Downloads/4 period/LNPOLY _total_1 4 .xlsx")
+LNROSN_final_model_4 <- read_excel("C:/Users/Лиза/Downloads/4 period/LNROSN _total_1 4 .xlsx")
+LNSBER_final_model_4 <- read_excel("C:/Users/Лиза/Downloads/4 period/LNSBER _total_1 4 .xlsx")
+LNTATN_final_model_4 <- read_excel("C:/Users/Лиза/Downloads/4 period/LNTATN _total_1 4 .xlsx")
+LNYNDX_final_model_4 <- read_excel("C:/Users/Лиза/Downloads/4 period/LNYNDX _total_1 4 .xlsx")
+final_models_table_4 <- rbind(LNAFKS_final_model_4, LNGAZP_final_model_4, LNGMKN_final_model_4, LNLKOH_final_model_4, LNMAGN_final_model_4, LNPOLY_final_model_4, LNROSN_final_model_4, LNSBER_final_model_4, LNTATN_final_model_4, LNYNDX_final_model_4)
+rownames(final_models_table_4) <- c("LNAFKS", "LNGAZP", "LNGMKN", "LNLKOH", "LNMAGN", "LNPOLY", "LNROSN", "LNSBER", "LNTATN", "LNYNDX")
+```
+
+#for the 5th period
+```{r}
+LNAFKS_final_model_5 <- read_excel("C:/Users/Лиза/Downloads/5 period/LNAFKS _total_1 5 .xlsx")
+LNGAZP_final_model_5 <- read_excel("C:/Users/Лиза/Downloads/5 period/LNGAZP _total_1 5 .xlsx")
+LNGMKN_final_model_5 <- read_excel("C:/Users/Лиза/Downloads/5 period/LNGMKN _total_1 5 .xlsx")
+LNLKOH_final_model_5 <- read_excel("C:/Users/Лиза/Downloads/5 period/LNLKOH _total_1 5 .xlsx")
+LNMAGN_final_model_5 <- read_excel("C:/Users/Лиза/Downloads/5 period/LNMAGN _total_1 5 .xlsx")
+LNPOLY_final_model_5 <- read_excel("C:/Users/Лиза/Downloads/5 period/LNPOLY _total_1 5 .xlsx")
+LNROSN_final_model_5 <- read_excel("C:/Users/Лиза/Downloads/5 period/LNROSN _total_1 5 .xlsx")
+LNSBER_final_model_5 <- read_excel("C:/Users/Лиза/Downloads/5 period/LNSBER _total_1 5 .xlsx")
+LNTATN_final_model_5 <- read_excel("C:/Users/Лиза/Downloads/5 period/LNTATN _total_1 5 .xlsx")
+LNYNDX_final_model_5 <- read_excel("C:/Users/Лиза/Downloads/5 period/LNYNDX _total_1 5 .xlsx")
+final_models_table_5 <- rbind(LNAFKS_final_model_5, LNGAZP_final_model_5, LNGMKN_final_model_5, LNLKOH_final_model_5, LNMAGN_final_model_5, LNPOLY_final_model_5, LNROSN_final_model_5, LNSBER_final_model_5, LNTATN_final_model_5, LNYNDX_final_model_5)
+rownames(final_models_table_5) <- c("LNAFKS", "LNGAZP", "LNGMKN", "LNLKOH", "LNMAGN", "LNPOLY", "LNROSN", "LNSBER", "LNTATN", "LNYNDX")
+```
+
+#for the 6th period
+```{r}
+LNAFKS_final_model_6 <- read_excel("C:/Users/Лиза/Downloads/6 period/LNAFKS _total_1 6 .xlsx")
+LNGAZP_final_model_6 <- read_excel("C:/Users/Лиза/Downloads/6 period/LNGAZP _total_1 6 .xlsx")
+LNGMKN_final_model_6 <- read_excel("C:/Users/Лиза/Downloads/6 period/LNGMKN _total_1 6 .xlsx")
+LNLKOH_final_model_6 <- read_excel("C:/Users/Лиза/Downloads/6 period/LNLKOH _total_1 6 .xlsx")
+change_model_LNLKOH_6 <- c(8, 7, 1, 2, "", "e") #change the optimal model for LKOH due to the fact that the resulting model has non-invertable hessian. Use the 2nd model based on minimum MSE criteria.
+LNLKOH_final_model_6 <- rbind(LNLKOH_final_model_6, change_model_LNLKOH_6)[2,]
+LNMAGN_final_model_6 <- read_excel("C:/Users/Лиза/Downloads/6 period/LNMAGN _total_1 6 .xlsx")
+LNPOLY_final_model_6 <- read_excel("C:/Users/Лиза/Downloads/6 period/LNPOLY _total_1 6 .xlsx")
+LNROSN_final_model_6 <- read_excel("C:/Users/Лиза/Downloads/6 period/LNROSN _total_1 6 .xlsx")
+LNSBER_final_model_6 <- read_excel("C:/Users/Лиза/Downloads/6 period/LNSBER _total_1 6 .xlsx")
+LNTATN_final_model_6 <- read_excel("C:/Users/Лиза/Downloads/6 period/LNTATN _total_1 6 .xlsx")
+LNYNDX_final_model_6 <- read_excel("C:/Users/Лиза/Downloads/6 period/LNYNDX _total_1 6 .xlsx")
+final_models_table_6 <- rbind(LNAFKS_final_model_6, LNGAZP_final_model_6, LNGMKN_final_model_6, LNLKOH_final_model_6, LNMAGN_final_model_6, LNPOLY_final_model_6, LNROSN_final_model_6, LNSBER_final_model_6, LNTATN_final_model_6, LNYNDX_final_model_6)
+rownames(final_models_table_6) <- c("LNAFKS", "LNGAZP", "LNGMKN", "LNLKOH", "LNMAGN", "LNPOLY", "LNROSN", "LNSBER", "LNTATN", "LNYNDX")
+```
+
+#for the 7th period
+```{r}
+LNAFKS_final_model_7 <- read_excel("C:/Users/Лиза/Downloads/7 period/LNAFKS _total_1 7 .xlsx")
+LNGAZP_final_model_7 <- read_excel("C:/Users/Лиза/Downloads/7 period/LNGAZP _total_1 7 .xlsx")
+LNGMKN_final_model_7 <- read_excel("C:/Users/Лиза/Downloads/7 period/LNGMKN _total_1 7 .xlsx")
+LNLKOH_final_model_7 <- read_excel("C:/Users/Лиза/Downloads/7 period/LNLKOH _total_1 7 .xlsx")
+LNMAGN_final_model_7 <- read_excel("C:/Users/Лиза/Downloads/7 period/LNMAGN _total_1 7 .xlsx")
+LNPOLY_final_model_7 <- read_excel("C:/Users/Лиза/Downloads/7 period/LNPOLY _total_1 7 .xlsx")
+LNROSN_final_model_7 <- read_excel("C:/Users/Лиза/Downloads/7 period/LNROSN _total_1 7 .xlsx")
+LNSBER_final_model_7 <- read_excel("C:/Users/Лиза/Downloads/7 period/LNSBER _total_1 7 .xlsx")
+LNTATN_final_model_7 <- read_excel("C:/Users/Лиза/Downloads/7 period/LNTATN _total_1 7 .xlsx")
+LNYNDX_final_model_7 <- read_excel("C:/Users/Лиза/Downloads/7 period/LNYNDX _total_1 7 .xlsx")
+final_models_table_7 <- rbind(LNAFKS_final_model_7, LNGAZP_final_model_7, LNGMKN_final_model_7, LNLKOH_final_model_7, LNMAGN_final_model_7, LNPOLY_final_model_7, LNROSN_final_model_7, LNSBER_final_model_7, LNTATN_final_model_7, LNYNDX_final_model_7)
+rownames(final_models_table_7) <- c("LNAFKS", "LNGAZP", "LNGMKN", "LNLKOH", "LNMAGN", "LNPOLY", "LNROSN", "LNSBER", "LNTATN", "LNYNDX")
+```
+
+#for the 8th period
+```{r}
+LNAFKS_final_model_8 <- read_excel("C:/Users/Лиза/Downloads/8 period/LNAFKS _total_1 8 .xlsx")
+LNGAZP_final_model_8 <- read_excel("C:/Users/Лиза/Downloads/8 period/LNGAZP _total_1 8 .xlsx")
+LNGMKN_final_model_8 <- read_excel("C:/Users/Лиза/Downloads/8 period/LNGMKN _total_1 8 .xlsx")
+LNLKOH_final_model_8 <- read_excel("C:/Users/Лиза/Downloads/8 period/LNLKOH _total_1 8 .xlsx")
+LNMAGN_final_model_8 <- read_excel("C:/Users/Лиза/Downloads/8 period/LNMAGN _total_1 8 .xlsx")
+LNPOLY_final_model_8 <- read_excel("C:/Users/Лиза/Downloads/8 period/LNPOLY _total_1 8 .xlsx")
+LNROSN_final_model_8 <- read_excel("C:/Users/Лиза/Downloads/8 period/LNROSN _total_1 8 .xlsx")
+LNSBER_final_model_8 <- read_excel("C:/Users/Лиза/Downloads/8 period/LNSBER _total_1 8 .xlsx")
+LNTATN_final_model_8 <- read_excel("C:/Users/Лиза/Downloads/8 period/LNTATN _total_1 8 .xlsx")
+LNYNDX_final_model_8 <- read_excel("C:/Users/Лиза/Downloads/8 period/LNYNDX _total_1 8 .xlsx")
+final_models_table_8 <- rbind(LNAFKS_final_model_8, LNGAZP_final_model_8, LNGMKN_final_model_8, LNLKOH_final_model_8, LNMAGN_final_model_8, LNPOLY_final_model_8, LNROSN_final_model_8, LNSBER_final_model_8, LNTATN_final_model_8, LNYNDX_final_model_8)
+rownames(final_models_table_8) <- c("LNAFKS", "LNGAZP", "LNGMKN", "LNLKOH", "LNMAGN", "LNPOLY", "LNROSN", "LNSBER", "LNTATN", "LNYNDX")
+```
+
+#for the 9th period
+```{r}
+LNAFKS_final_model_9 <- read_excel("C:/Users/Лиза/Downloads/9 period/LNAFKS _total_1 9 .xlsx")
+LNGAZP_final_model_9 <- read_excel("C:/Users/Лиза/Downloads/9 period/LNGAZP _total_1 9 .xlsx")
+LNGMKN_final_model_9 <- read_excel("C:/Users/Лиза/Downloads/9 period/LNGMKN _total_1 9 .xlsx")
+LNLKOH_final_model_9 <- read_excel("C:/Users/Лиза/Downloads/9 period/LNLKOH _total_1 9 .xlsx")
+LNMAGN_final_model_9 <- read_excel("C:/Users/Лиза/Downloads/9 period/LNMAGN _total_1 9 .xlsx")
+LNPOLY_final_model_9 <- read_excel("C:/Users/Лиза/Downloads/9 period/LNPOLY _total_1 9 .xlsx")
+LNROSN_final_model_9 <- read_excel("C:/Users/Лиза/Downloads/9 period/LNROSN _total_1 9 .xlsx")
+LNSBER_final_model_9 <- read_excel("C:/Users/Лиза/Downloads/9 period/LNSBER _total_1 9 .xlsx")
+LNTATN_final_model_9 <- read_excel("C:/Users/Лиза/Downloads/9 period/LNTATN _total_1 9 .xlsx")
+LNYNDX_final_model_9 <- read_excel("C:/Users/Лиза/Downloads/9 period/LNYNDX _total_1 9 .xlsx")
+final_models_table_9 <- rbind(LNAFKS_final_model_9, LNGAZP_final_model_9, LNGMKN_final_model_9, LNLKOH_final_model_9, LNMAGN_final_model_9, LNPOLY_final_model_9, LNROSN_final_model_9, LNSBER_final_model_9, LNTATN_final_model_9, LNYNDX_final_model_9)
+rownames(final_models_table_9) <- c("LNAFKS", "LNGAZP", "LNGMKN", "LNLKOH", "LNMAGN", "LNPOLY", "LNROSN", "LNSBER", "LNTATN", "LNYNDX")
+```
+
+#for the 10th period
+```{r}
+LNAFKS_final_model_10 <- read_excel("C:/Users/Лиза/Downloads/10 period/LNAFKS _total_1 10 .xlsx")
+LNGAZP_final_model_10 <- read_excel("C:/Users/Лиза/Downloads/10 period/LNGAZP _total_1 10 .xlsx")
+LNGMKN_final_model_10 <- read_excel("C:/Users/Лиза/Downloads/10 period/LNGMKN _total_1 10 .xlsx")
+LNLKOH_final_model_10 <- read_excel("C:/Users/Лиза/Downloads/10 period/LNLKOH _total_1 10 .xlsx")
+LNMAGN_final_model_10 <- read_excel("C:/Users/Лиза/Downloads/10 period/LNMAGN _total_1 10 .xlsx")
+LNPOLY_final_model_10 <- read_excel("C:/Users/Лиза/Downloads/10 period/LNPOLY _total_1 10 .xlsx")
+LNROSN_final_model_10 <- read_excel("C:/Users/Лиза/Downloads/10 period/LNROSN _total_1 10 .xlsx")
+LNSBER_final_model_10 <- read_excel("C:/Users/Лиза/Downloads/10 period/LNSBER _total_1 10 .xlsx")
+LNTATN_final_model_10 <- read_excel("C:/Users/Лиза/Downloads/10 period/LNTATN _total_1 10 .xlsx")
+change_model_LNTATN_10 <- c(5, 9, 2, 2, "", "gjr")  #change the optimal model for TATN due to the fact that the resulting model has non-invertable hessian. Use the 2nd model based on minimum MSE criteria.
+LNTATN_final_model_10 <- rbind(LNTATN_final_model_10, change_model_LNTATN_10)[2,]
+LNYNDX_final_model_10 <- read_excel("C:/Users/Лиза/Downloads/10 period/LNYNDX _total_1 10 .xlsx")
+final_models_table_10 <- rbind(LNAFKS_final_model_10, LNGAZP_final_model_10, LNGMKN_final_model_10, LNLKOH_final_model_10, LNMAGN_final_model_10, LNPOLY_final_model_10, LNROSN_final_model_10, LNSBER_final_model_10, LNTATN_final_model_10, LNYNDX_final_model_10)
+rownames(final_models_table_10) <- c("LNAFKS", "LNGAZP", "LNGMKN", "LNLKOH", "LNMAGN", "LNPOLY", "LNROSN", "LNSBER", "LNTATN", "LNYNDX")
+```
+
+#for the 11th period
+```{r}
+LNAFKS_final_model_11 <- read_excel("C:/Users/Лиза/Downloads/11 period/LNAFKS _total_1 11 .xlsx")
+LNGAZP_final_model_11 <- read_excel("C:/Users/Лиза/Downloads/11 period/LNGAZP _total_1 11 .xlsx")
+LNGMKN_final_model_11 <- read_excel("C:/Users/Лиза/Downloads/11 period/LNGMKN _total_1 11 .xlsx")
+LNLKOH_final_model_11 <- read_excel("C:/Users/Лиза/Downloads/11 period/LNLKOH _total_1 11 .xlsx")
+LNMAGN_final_model_11 <- read_excel("C:/Users/Лиза/Downloads/11 period/LNMAGN _total_1 11 .xlsx")
+LNPOLY_final_model_11 <- read_excel("C:/Users/Лиза/Downloads/11 period/LNPOLY _total_1 11 .xlsx")
+change_model_LNPOLY_11 <- c(8, 8, 1, 1, "", "gjr") #change the optimal model for POLY due to the fact that the resulting model has non-invertable hessian. Use the 2nd model based on minimum MSE criteria.
+LNPOLY_final_model_11 <- rbind(LNPOLY_final_model_11, change_model_LNPOLY_11)[2,]
+LNROSN_final_model_11 <- read_excel("C:/Users/Лиза/Downloads/11 period/LNROSN _total_1 11 .xlsx")
+LNSBER_final_model_11 <- read_excel("C:/Users/Лиза/Downloads/11 period/LNSBER _total_1 11 .xlsx")
+LNTATN_final_model_11 <- read_excel("C:/Users/Лиза/Downloads/11 period/LNTATN _total_1 11 .xlsx")
+LNYNDX_final_model_11 <- read_excel("C:/Users/Лиза/Downloads/11 period/LNYNDX _total_1 11 .xlsx")
+final_models_table_11 <- rbind(LNAFKS_final_model_11, LNGAZP_final_model_11, LNGMKN_final_model_11, LNLKOH_final_model_11, LNMAGN_final_model_11, LNPOLY_final_model_11, LNROSN_final_model_11, LNSBER_final_model_11, LNTATN_final_model_11, LNYNDX_final_model_11)
+rownames(final_models_table_11) <- c("LNAFKS", "LNGAZP", "LNGMKN", "LNLKOH", "LNMAGN", "LNPOLY", "LNROSN", "LNSBER", "LNTATN", "LNYNDX")
+```
+
+#for the 12 period
+```{r}
+LNAFKS_final_model_12 <- read_excel("C:/Users/Лиза/Downloads/12 period/LNAFKS _total_1 12 .xlsx")
+LNGAZP_final_model_12 <- read_excel("C:/Users/Лиза/Downloads/12 period/LNGAZP _total_1 12 .xlsx")
+LNGMKN_final_model_12 <- read_excel("C:/Users/Лиза/Downloads/12 period/LNGMKN _total_1 12 .xlsx")
+LNLKOH_final_model_12 <- read_excel("C:/Users/Лиза/Downloads/12 period/LNLKOH _total_1 12 .xlsx")
+LNMAGN_final_model_12 <- read_excel("C:/Users/Лиза/Downloads/12 period/LNMAGN _total_1 12 .xlsx")
+LNPOLY_final_model_12 <- read_excel("C:/Users/Лиза/Downloads/12 period/LNPOLY _total_1 12 .xlsx")
+LNROSN_final_model_12 <- read_excel("C:/Users/Лиза/Downloads/12 period/LNROSN _total_1 12 .xlsx")
+LNSBER_final_model_12 <- read_excel("C:/Users/Лиза/Downloads/12 period/LNSBER _total_1 12 .xlsx")
+LNTATN_final_model_12 <- read_excel("C:/Users/Лиза/Downloads/12 period/LNTATN _total_1 12 .xlsx")
+LNYNDX_final_model_12 <- read_excel("C:/Users/Лиза/Downloads/12 period/LNYNDX _total_1 12 .xlsx")
+final_models_table_12 <- rbind(LNAFKS_final_model_12, LNGAZP_final_model_12, LNGMKN_final_model_12, LNLKOH_final_model_12, LNMAGN_final_model_12, LNPOLY_final_model_12, LNROSN_final_model_12, LNSBER_final_model_12, LNTATN_final_model_12, LNYNDX_final_model_12)
+rownames(final_models_table_12) <- c("LNAFKS", "LNGAZP", "LNGMKN", "LNLKOH", "LNMAGN", "LNPOLY", "LNROSN", "LNSBER", "LNTATN", "LNYNDX")
+```
+
+#create weights matrix with 6001 rows 
+```{r}
+weights_mat <- matrix(0, nrow = 6000, ncol = 10)
+for (i in 1:6000) {
+  weights_mat[i,] <- diff(sort(c(runif(9),0,1)))
+}
+weights_mat <- rbind(rep(1/10, 10), weights_mat)
+```
+
+#custom functions for calculation Sharpe, Sortino and CRRA utility
+```{r}
+Sharpe_ratio <- function(return_vector) {
+  SR<-mean(return_vector) / sd(return_vector)
+  return(SR)
+}
+Sortino_ratio <- function(return_vector) {
+  SRT<-mean(return_vector) / sd(return_vector[return_vector < 1])
+  return(SRT)
+}
+CRRA_utility <- function(return_vector, parameter) {
+  if (parameter == 1) {
+    CRRA <- log(1+return_vector)
+  }else{
+    CRRA <- ((1+return_vector)^(1-parameter) - 1)/(1-parameter)
+  }
+  return(mean(CRRA))
+}
+```
+
+
+```{r}
+na_change <- function(x) {
+  if (is.na(x)) {
+    value = 0
+  } else {
+    value = x
+  }
+  return(value)
+}
+```
+
+#we write custom function "simulation_forecast_for_period" in order to get optimal portfolio weights for modeled portfolios for each of 12 periods. This function has 3 parameters: initial_data - table with ten optimal models for the dynamics of log-return for the specific period, period_num - period number, Weights_matrix - matrix of weights.
+```{r}
+simulation_forecast_for_period <- function(initial_data, period_num, Weights_matrix) {
+final_models_table <- initial_data
+residuals_table <- matrix(0, nrow = calendar[period_num,11,drop=TRUE]-calendar[period_num,8,drop=TRUE]+1, ncol = nrow(final_models_table)) #collect residuals for 10 stocks
+fit_table <- list()
+for (i in 1:ncol(residuals_table)) {
+  if (final_models_table[i,6] == "gjr") {
+  print(i)
+  model_f <- ugarchspec(variance.model = list(model = "gjrGARCH", garchOrder = c(as.integer(final_models_table[i,3]), as.integer(final_models_table[i,4])),external.regressors = coredata(data_2018_2019_lnreturn_xts)[calendar[period_num,8,drop=TRUE]:calendar[period_num,11,drop=TRUE],12:15]), mean.model = list(armaOrder = c(as.integer(final_models_table[i,1]), as.integer(final_models_table[i,2])),external.regressors = coredata(data_2018_2019_lnreturn_xts)[calendar[period_num,8,drop=TRUE]:calendar[period_num,11,drop=TRUE],12:15]))
+      model_est_f<-ugarchfit(spec=model_f,data=data_2018_2019_lnreturn_xts[calendar[period_num,8,drop=TRUE]:calendar[period_num,11,drop=TRUE],i], solver = 'gosolnp', solver.control = list(rseed = 423, n.restarts = 2))
+  residuals_table[,i]<-residuals(model_est_f, standardize = TRUE)
+  fit_table[[i]]<-model_est_f
+  }else{
+  print(i)
+  model_f <- ugarchspec(variance.model = list(model = "eGARCH", garchOrder = c(as.integer(final_models_table[i,3]), as.integer(final_models_table[i,4])),external.regressors = coredata(data_2018_2019_lnreturn_xts)[calendar[period_num,8,drop=TRUE]:calendar[period_num,11,drop=TRUE],12:15]), mean.model = list(armaOrder = c(as.integer(final_models_table[i,1]), as.integer(final_models_table[i,2])),external.regressors = coredata(data_2018_2019_lnreturn_xts)[calendar[period_num,8,drop=TRUE]:calendar[period_num,11,drop=TRUE],12:15]))
+      model_est_f<-ugarchfit(spec=model_f,data=data_2018_2019_lnreturn_xts[calendar[period_num,8,drop=TRUE]:calendar[period_num,11,drop=TRUE],i], solver = 'gosolnp', solver.control = list(rseed = 423, n.restarts = 2)) 
+  residuals_table[,i]<-residuals(model_est_f, standardize = TRUE)
+  fit_table[[i]]<-model_est_f
+  }
+}
+residuals_table<-data.frame(residuals_table)
+colnames(residuals_table) <- rownames(final_models_table)
+names(fit_table)<-colnames(residuals_table)
+copula_data<-matrix(0, nrow = calendar[period_num,11,drop=TRUE]-calendar[period_num,8,drop=TRUE]+1, ncol = ncol(residuals_table)) #collect copula data
+POT_fit_assets<-list() #collect estimated POT object for each stock
+for (i in 1:ncol(copula_data)) {
+  POT_fit <- spdfit(residuals_table[,i], upper = 0.9, lower = 0.1, tailfit="GPD", type = "mle", kernelfit = "normal")
+  copula_data[,i] <- pspd(residuals_table[,i], POT_fit)
+  POT_fit_assets[i] <- POT_fit
+}
+copula_data<-data.frame(copula_data)
+colnames(copula_data) <- colnames(residuals_table)
+copula_data <- as.copuladata(copula_data)
+names(POT_fit_assets) <- colnames(residuals_table)
+#estimate different types of Vine-Copulas
+fit_reg_vine_all=RVineStructureSelect(copula_data, familyset=NA, selectioncrit="AIC",
+indeptest=FALSE, level=0.05,type="RVine")
+fit_reg_vine_all_ind=RVineStructureSelect(copula_data, familyset=NA, selectioncrit="AIC",
+indeptest=TRUE, level=0.05,type="RVine")
+fit_reg_vine_tG=RVineStructureSelect(copula_data, familyset=c(1,2), selectioncrit="AIC",
+indeptest=FALSE, level=0.05,type="RVine")
+fit_reg_vine_tG_ind=RVineStructureSelect(copula_data, familyset=c(1,2), selectioncrit="AIC",
+indeptest=TRUE, level=0.05,type="RVine")
+fit_cvine_all=RVineStructureSelect(copula_data, familyset=NA, selectioncrit="AIC",
+indeptest=FALSE, level=0.05,type="CVine")
+fit_cvine_all_ind=RVineStructureSelect(copula_data, familyset=NA, selectioncrit="AIC",
+indeptest=TRUE, level=0.05,type ="CVine")
+fit_cvine_tG=RVineStructureSelect(copula_data, familyset=c(1,2), selectioncrit="AIC",
+indeptest=FALSE, level=0.05,type="CVine")
+fit_cvine_tG_ind=RVineStructureSelect(copula_data, familyset=c(1,2), selectioncrit="AIC",
+indeptest=TRUE, level=0.05,type ="CVine")
+d = dim(copula_data)[2]
+M = 1 - abs(TauMatrix(copula_data))
+hamilton = insert_dummy(TSP(M),label="cut")
+sol = solve_TSP(hamilton,method="repetitive_nn")
+order = cut_tour(sol,"cut")
+DVM= D2RVine(order,family=rep(0,d*(d-1)/2),par=rep(0,d*(d-1)/2))
+fit_dvine_all=RVineCopSelect(data=copula_data,familyset=NA,indeptest=FALSE,
+level=0.05,Matrix=DVM$Matrix,selectioncrit="AIC")
+fit_dvine_all_ind=RVineCopSelect(data=copula_data,familyset=NA,indeptest=TRUE,
+level=0.05,Matrix=DVM$Matrix,selectioncrit="AIC")
+fit_dvine_tG=RVineCopSelect(data=copula_data,familyset=c(1,2),indeptest=FALSE,
+level=0.05,Matrix=DVM$Matrix,selectioncrit="AIC")
+fit_dvine_tG_ind=RVineCopSelect(data=copula_data,familyset=c(1,2),indeptest=TRUE,
+level=0.05,Matrix=DVM$Matrix,selectioncrit="AIC")
+model.out<-function(fit, data, digits=2){
+df<-sum(abs(fit$par)>0)+sum(fit$par2>0)
+out<-round(c(RVineLogLik(data, fit)$loglik, df, RVineAIC(data,fit)$AIC, RVineBIC(data,fit)$BIC),digits)
+names(out)<-c("loglik","par","AIC","BIC")
+out
+}
+out.table<-rbind(
+model.out(fit_reg_vine_all, copula_data),
+model.out(fit_reg_vine_all_ind, copula_data),
+model.out(fit_reg_vine_tG, copula_data),
+model.out(fit_reg_vine_tG_ind, copula_data),
+model.out(fit_cvine_all, copula_data),
+model.out(fit_cvine_all_ind, copula_data),
+model.out(fit_cvine_tG, copula_data),
+model.out(fit_cvine_tG_ind, copula_data),
+model.out(fit_dvine_all, copula_data),
+model.out(fit_dvine_all_ind, copula_data),
+model.out(fit_dvine_tG, copula_data),
+model.out(fit_dvine_tG_ind, copula_data))
+row.names(out.table)<-c("R-vine-all","R-vine-all-ind","R-vine-tG",
+"R-vine-tG-ind","C-vine-all","C-vine-all-ind",
+"C-vine-tG","C-vine-tG-ind", "D-vine-all", "D-vine-all-ind", "D-vine-tG", "D-vine-tG-ind")
+out.table <- data.frame(out.table)
+out.table<-out.table%>%arrange(as.numeric(BIC))
+best_vine_model <- out.table[1,]
+if (rownames(best_vine_model)[1]=="R-vine-all") {
+  best_vine_object <- RVineStructureSelect(copula_data, familyset=NA, selectioncrit="AIC",
+indeptest=FALSE, level=0.05,type="RVine")
+} else if (rownames(best_vine_model)[1]=="R-vine-all-ind") {
+  best_vine_object <- RVineStructureSelect(copula_data, familyset=NA, selectioncrit="AIC",
+indeptest=TRUE, level=0.05,type="RVine")
+} else if (rownames(best_vine_model)[1]=="R-vine-tG") {
+  best_vine_object <- RVineStructureSelect(copula_data, familyset=c(1,2), selectioncrit="AIC",
+indeptest=FALSE, level=0.05,type="RVine")
+} else if (rownames(best_vine_model)[1]=="R-vine-tG-ind") {
+  best_vine_object <- RVineStructureSelect(copula_data, familyset=c(1,2), selectioncrit="AIC",
+indeptest=TRUE, level=0.05,type="RVine")
+} else if (rownames(best_vine_model)[1]=="C-vine-all") {
+  best_vine_object <- RVineStructureSelect(copula_data, familyset=NA, selectioncrit="AIC",
+indeptest=FALSE, level=0.05,type="CVine") 
+} else if (rownames(best_vine_model)[1]=="C-vine-all-ind") {
+  best_vine_object <- RVineStructureSelect(copula_data, familyset=NA, selectioncrit="AIC",
+indeptest=TRUE, level=0.05,type ="CVine")
+} else if (rownames(best_vine_model)[1]=="C-vine-tG") {
+  best_vine_object <- RVineStructureSelect(copula_data, familyset=c(1,2), selectioncrit="AIC",
+indeptest=FALSE, level=0.05,type="CVine")
+} else if (rownames(best_vine_model)[1]=="C-vine-tG-ind") {
+  best_vine_object <- RVineStructureSelect(copula_data, familyset=c(1,2), selectioncrit="AIC",
+indeptest=TRUE, level=0.05,type ="CVine")
+} else if (rownames(best_vine_model)[1]=="D-vine-all") {
+  best_vine_object <- RVineCopSelect(data=copula_data,familyset=NA,indeptest=FALSE,
+level=0.05,Matrix=DVM$Matrix,selectioncrit="AIC")
+} else if (rownames(best_vine_model)[1]=="D-vine-all-ind") {
+  best_vine_object <- RVineCopSelect(data=copula_data,familyset=NA,indeptest=TRUE,
+level=0.05,Matrix=DVM$Matrix,selectioncrit="AIC")
+} else if (rownames(best_vine_model)[1]=="D-vine-tG") {
+  best_vine_object <- RVineCopSelect(data=copula_data,familyset=c(1,2),indeptest=FALSE,
+level=0.05,Matrix=DVM$Matrix,selectioncrit="AIC")
+} else {
+  best_vine_object <- RVineCopSelect(data=copula_data,familyset=c(1,2),indeptest=TRUE,
+level=0.05,Matrix=DVM$Matrix,selectioncrit="AIC")
+}
+#best Vine-Copula model
+results_vine<-summary(best_vine_object)
+write.xlsx(results_vine, paste0("RVine summary", period_num, ".xlsx"))
+simulation_list<-list()
+# 10000 simulations from the estimated distribution
+for (i in 1:10000) {
+  sim_data = as.copuladata(RVineSim(calendar[period_num,15,drop=TRUE], best_vine_object))
+  inverse_transformation <- matrix(0, nrow = calendar[period_num,15,drop=TRUE], ncol = ncol(sim_data))
+    for (j in 1:ncol(sim_data)) {
+        inverse_transformation[,j] <- qspd(sim_data[,j], POT_fit_assets[[j]])
+    }
+  simulation_list[[i]]<-inverse_transformation
+}
+ret_list<-list()
+for (j in 1:10000) {
+epsilon_wave <- matrix(0, nrow = 10 + calendar[period_num,15,drop=TRUE], ncol = 10)
+epsilon_wave[1:10,1:10] <- as.matrix(tail(residuals_table,10))
+epsilon_wave[11:nrow(epsilon_wave),1:10] <- simulation_list[[j]]
+h <- matrix(0, nrow = 10 + calendar[period_num,15,drop=TRUE], ncol = 10)
+for (i in 1:10) {
+  h[1:10,i] <- as.matrix(tail(sigma(fit_table[[i]]),10))
+}
+epsilon <- matrix(0, nrow = 10 + calendar[period_num,15,drop=TRUE], ncol = 10)
+for (i in 1:10) {
+  epsilon[1:10,i] <- as.matrix(tail(residuals(fit_table[[i]]),10))
+}
+ret <- matrix(0, nrow = 10 + calendar[period_num,15,drop=TRUE], ncol = 10)
+ret[1:10,1:10] <- as.matrix(tail(data_2018_2019_lnreturn_xts[calendar[period_num,8,drop=TRUE]:calendar[period_num,11,drop=TRUE],1:10],10))
+ext_reg <- matrix(0, nrow = 10 + calendar[period_num,15,drop=TRUE], ncol = 4)
+ext_reg[1:10,1:4] <- as.matrix(tail(coredata(data_2018_2019_lnreturn_xts)[calendar[period_num,8,drop=TRUE]:calendar[period_num,11,drop=TRUE],12:15],10))
+ext_reg[11:nrow(ext_reg),1:4] <- as.matrix(coredata(data_2018_2019_lnreturn_xts)[calendar[period_num,12,drop=TRUE]:calendar[period_num,13,drop=TRUE],12:15])
+for (a in 1:10) {
+if (final_models_table[a,6] == "gjr") {
+  alpha_coef_gjr <- apply(matrix(c(fit_table[[a]]@fit$coef["alpha2"],fit_table[[a]]@fit$coef["alpha1"]), nrow = 1, ncol = 2),2,na_change)
+  beta_coef_gjr <- apply(matrix(c(fit_table[[a]]@fit$coef["beta2"],fit_table[[a]]@fit$coef["beta1"]), nrow = 1, ncol = 2),2,na_change)
+  gamma_coef_gjr <- apply(matrix(c(fit_table[[a]]@fit$coef["gamma2"],fit_table[[a]]@fit$coef["gamma1"]), nrow = 1, ncol = 2),2,na_change)
+  omega_coef_gjr <- matrix(fit_table[[a]]@fit$coef["omega"], nrow = 1, ncol = 1)
+  vxreg_coef_gjr <- matrix(c(fit_table[[a]]@fit$coef["vxreg1"],fit_table[[a]]@fit$coef["vxreg2"],fit_table[[a]]@fit$coef["vxreg3"],fit_table[[a]]@fit$coef["vxreg4"]), nrow = 1, ncol = 4)
+  ar_coef_gjr <- apply(matrix(c(fit_table[[a]]@fit$coef["ar10"],fit_table[[a]]@fit$coef["ar9"],fit_table[[a]]@fit$coef["ar8"],fit_table[[a]]@fit$coef["ar7"],fit_table[[a]]@fit$coef["ar6"],fit_table[[a]]@fit$coef["ar5"],fit_table[[a]]@fit$coef["ar4"],fit_table[[a]]@fit$coef["ar3"],fit_table[[a]]@fit$coef["ar2"],fit_table[[a]]@fit$coef["ar1"]), nrow = 1, ncol = 10),2,na_change)
+  ma_coef_gjr <- apply(matrix(c(fit_table[[a]]@fit$coef["ma10"],fit_table[[a]]@fit$coef["ma9"],fit_table[[a]]@fit$coef["ma8"],fit_table[[a]]@fit$coef["ma7"],fit_table[[a]]@fit$coef["ma6"],fit_table[[a]]@fit$coef["ma5"],fit_table[[a]]@fit$coef["ma4"],fit_table[[a]]@fit$coef["ma3"],fit_table[[a]]@fit$coef["ma2"],fit_table[[a]]@fit$coef["ma1"]), nrow = 1, ncol = 10),2,na_change)
+  mu_coef_gjr <- matrix(fit_table[[a]]@fit$coef["mu"], nrow = 1, ncol = 1)
+  mxreg_coef_gjr <- matrix(c(fit_table[[a]]@fit$coef["mxreg1"],fit_table[[a]]@fit$coef["mxreg2"],fit_table[[a]]@fit$coef["mxreg3"],fit_table[[a]]@fit$coef["mxreg4"]), nrow = 1, ncol = 4)
+  for (t in 11 : (10 + calendar[period_num,15,drop=TRUE])) {
+    h_temp<-(omega_coef_gjr + sum(alpha_coef_gjr * (epsilon_wave[(t-2):(t-1),a])^2 * h[(t-2):(t-1),a])+sum(beta_coef_gjr*h[(t-2):(t-1),a])+sum(gamma_coef_gjr*(epsilon_wave[(t-2):(t-1),a])^2 * h[(t-2):(t-1),a]*as.numeric(c((epsilon_wave[(t-2):(t-1),a] * sqrt(h[(t-2):(t-1),a]))[1]<0, (epsilon_wave[(t-2):(t-1),a] * sqrt(h[(t-2):(t-1),a]))[2]<0)))+sum(vxreg_coef_gjr*ext_reg[t,1:4]))[1,1]
+    if (h_temp >= 0) {h_temp=h_temp}else{h_temp=0}
+    h[t,a]<-h_temp
+    epsilon[t,a]<-epsilon_wave[t,a]*sqrt(h[t,a])
+    ret[t,a]<-(mu_coef_gjr+sum(ar_coef_gjr*ret[(t-10):(t-1),a])+sum(ma_coef_gjr*epsilon[(t-10):(t-1),a])+sum(mxreg_coef_gjr*ext_reg[t,1:4])+epsilon[t,a])[1,1]
+  }
+} else {
+  alpha_coef_e <- apply(matrix(c(fit_table[[a]]@fit$coef["alpha2"],fit_table[[a]]@fit$coef["alpha1"]), nrow = 1, ncol = 2),2,na_change)
+  beta_coef_e <- apply(matrix(c(fit_table[[a]]@fit$coef["beta2"],fit_table[[a]]@fit$coef["beta1"]), nrow = 1, ncol = 2),2,na_change)
+  gamma_coef_e <- apply(matrix(c(fit_table[[a]]@fit$coef["gamma2"],fit_table[[a]]@fit$coef["gamma1"]), nrow = 1, ncol = 2),2,na_change)
+  omega_coef_e <- matrix(fit_table[[a]]@fit$coef["omega"], nrow = 1, ncol = 1)
+  vxreg_coef_e <- matrix(c(fit_table[[a]]@fit$coef["vxreg1"],fit_table[[a]]@fit$coef["vxreg2"],fit_table[[a]]@fit$coef["vxreg3"],fit_table[[a]]@fit$coef["vxreg4"]), nrow = 1, ncol = 4)
+  ar_coef_e <- apply(matrix(c(fit_table[[a]]@fit$coef["ar10"],fit_table[[a]]@fit$coef["ar9"],fit_table[[a]]@fit$coef["ar8"],fit_table[[a]]@fit$coef["ar7"],fit_table[[a]]@fit$coef["ar6"],fit_table[[a]]@fit$coef["ar5"],fit_table[[a]]@fit$coef["ar4"],fit_table[[a]]@fit$coef["ar3"],fit_table[[a]]@fit$coef["ar2"],fit_table[[a]]@fit$coef["ar1"]), nrow = 1, ncol = 10),2,na_change)
+  ma_coef_e <- apply(matrix(c(fit_table[[a]]@fit$coef["ma10"],fit_table[[a]]@fit$coef["ma9"],fit_table[[a]]@fit$coef["ma8"],fit_table[[a]]@fit$coef["ma7"],fit_table[[a]]@fit$coef["ma6"],fit_table[[a]]@fit$coef["ma5"],fit_table[[a]]@fit$coef["ma4"],fit_table[[a]]@fit$coef["ma3"],fit_table[[a]]@fit$coef["ma2"],fit_table[[a]]@fit$coef["ma1"]), nrow = 1, ncol = 10),2,na_change)
+  mu_coef_e <- matrix(fit_table[[a]]@fit$coef["mu"], nrow = 1, ncol = 1)
+  mxreg_coef_e <- matrix(c(fit_table[[a]]@fit$coef["mxreg1"],fit_table[[a]]@fit$coef["mxreg2"],fit_table[[a]]@fit$coef["mxreg3"],fit_table[[a]]@fit$coef["mxreg4"]), nrow = 1, ncol = 4)
+  for (t in 11 : (10 + calendar[period_num,15,drop=TRUE])) {
+   h_temp <- (exp(omega_coef_e + sum(alpha_coef_e*epsilon_wave[(t-2):(t-1),a]) + sum(gamma_coef_e*(abs(epsilon_wave[(t-2):(t-1),a])-mean(abs(epsilon_wave[(t-2):(t-1),a])))) + sum(beta_coef_e*log(h[(t-2):(t-1),a])) + sum(vxreg_coef_e*ext_reg[t,1:4])))[1,1]
+   if (h_temp >= 0) {h_temp=h_temp}else{h_temp=0}
+   h[t,a]<-h_temp
+   epsilon[t,a]<-epsilon_wave[t,a]*sqrt(h[t,a])
+   ret[t,a]<-(mu_coef_e+sum(ar_coef_e*ret[(t-10):(t-1),a])+sum(ma_coef_e*epsilon[(t-10):(t-1),a])+sum(mxreg_coef_e*ext_reg[t,1:4])+epsilon[t,a])[1,1]
+  }
+}
+}
+ret_list[[j]]<-ret[11:nrow(ret),1:10]
+}
+P0_vector <- data_2018_2019[calendar[period_num,12,drop=TRUE]-1,4:13]
+P1 <- list()
+for (i in 1:10000) {
+  P1[[i]] <- P0_vector*exp(apply(ret_list[[i]],2,sum))
+}
+P1<-as.data.frame(matrix(unlist(P1),nrow=length(P1),byrow=TRUE))
+Value_initial <- as.matrix(P0_vector) %*% t(Weights_matrix)
+Value_end <- as.matrix(P1) %*% t(Weights_matrix)
+Portfolio_return <- matrix(0, nrow = 10000, ncol = 6001)
+for (i in 1:10000) {
+  Portfolio_return[i,] <- Value_end[i,] / Value_initial
+}
+final_portfolio_table <- matrix(0, nrow = 121, ncol = 1)
+ratios_table <- matrix (0, nrow = 10, ncol = 6001)
+for (i in 1:6001) {
+  ratios_table[1,i] <- mean(Portfolio_return[,i])
+  ratios_table[2,i] <- Sharpe_ratio(Portfolio_return[,i])
+  ratios_table[3,i] <- Sortino_ratio(Portfolio_return[,i])
+  ratios_table[4,i] <- CRRA_utility(Portfolio_return[,i], 1)
+  ratios_table[5,i] <- CRRA_utility(Portfolio_return[,i], 0.1)
+  ratios_table[6,i] <- CRRA_utility(Portfolio_return[,i], 0.2)
+  ratios_table[7,i] <- CRRA_utility(Portfolio_return[,i], 0.5)
+  ratios_table[8,i] <- CRRA_utility(Portfolio_return[,i], 2)
+  ratios_table[9,i] <- CRRA_utility(Portfolio_return[,i], 5)
+  ratios_table[10,i] <- CRRA_utility(Portfolio_return[,i], 10)
+}
+index_max_return<-which.max(ratios_table[1,])
+index_min_return<-which.min(ratios_table[1,])
+index_max_Sharpe<-which.max(ratios_table[2,])
+index_max_Sortino<-which.max(ratios_table[3,])
+index_max_CRRA_1<-which.max(ratios_table[4,])
+index_max_CRRA_0_1<-which.max(ratios_table[5,])
+index_max_CRRA_0_2<-which.max(ratios_table[6,])
+index_max_CRRA_0_5<-which.max(ratios_table[7,])
+index_max_CRRA_2<-which.max(ratios_table[8,])
+index_max_CRRA_5<-which.max(ratios_table[9,])
+index_max_CRRA_10<-which.max(ratios_table[10,])
+final_portfolio_table[1,1]<-index_max_return
+final_portfolio_table[2,1]<-index_min_return
+final_portfolio_table[3,1]<-index_max_Sharpe
+final_portfolio_table[4,1]<-Weights_matrix[index_max_Sharpe,][1]
+final_portfolio_table[5,1]<-Weights_matrix[index_max_Sharpe,][2]
+final_portfolio_table[6,1]<-Weights_matrix[index_max_Sharpe,][3]
+final_portfolio_table[7,1]<-Weights_matrix[index_max_Sharpe,][4]
+final_portfolio_table[8,1]<-Weights_matrix[index_max_Sharpe,][5]
+final_portfolio_table[9,1]<-Weights_matrix[index_max_Sharpe,][6]
+final_portfolio_table[10,1]<-Weights_matrix[index_max_Sharpe,][7]
+final_portfolio_table[11,1]<-Weights_matrix[index_max_Sharpe,][8]
+final_portfolio_table[12,1]<-Weights_matrix[index_max_Sharpe,][9]
+final_portfolio_table[13,1]<-Weights_matrix[index_max_Sharpe,][10]
+final_portfolio_table[14,1]<-ratios_table[2,index_max_Sharpe]
+final_portfolio_table[15,1]<-(as.numeric(data_2018_2019[calendar[period_num,13,drop=TRUE],4:13])%*%(t(Weights_matrix)[,index_max_Sharpe]))/Value_initial[index_max_Sharpe]
+final_portfolio_table[16,1]<-index_max_Sortino
+final_portfolio_table[17,1]<-Weights_matrix[index_max_Sortino,][1]
+final_portfolio_table[18,1]<-Weights_matrix[index_max_Sortino,][2]
+final_portfolio_table[19,1]<-Weights_matrix[index_max_Sortino,][3]
+final_portfolio_table[20,1]<-Weights_matrix[index_max_Sortino,][4]
+final_portfolio_table[21,1]<-Weights_matrix[index_max_Sortino,][5]
+final_portfolio_table[22,1]<-Weights_matrix[index_max_Sortino,][6]
+final_portfolio_table[23,1]<-Weights_matrix[index_max_Sortino,][7]
+final_portfolio_table[24,1]<-Weights_matrix[index_max_Sortino,][8]
+final_portfolio_table[25,1]<-Weights_matrix[index_max_Sortino,][9]
+final_portfolio_table[26,1]<-Weights_matrix[index_max_Sortino,][10]
+final_portfolio_table[27,1]<-ratios_table[3,index_max_Sortino]
+final_portfolio_table[28,1]<-(as.numeric(data_2018_2019[calendar[period_num,13,drop=TRUE],4:13])%*%(t(Weights_matrix)[,index_max_Sortino]))/Value_initial[index_max_Sortino]
+final_portfolio_table[29,1]<-index_max_CRRA_1
+final_portfolio_table[30,1]<-Weights_matrix[index_max_CRRA_1,][1]
+final_portfolio_table[31,1]<-Weights_matrix[index_max_CRRA_1,][2]
+final_portfolio_table[32,1]<-Weights_matrix[index_max_CRRA_1,][3]
+final_portfolio_table[33,1]<-Weights_matrix[index_max_CRRA_1,][4]
+final_portfolio_table[34,1]<-Weights_matrix[index_max_CRRA_1,][5]
+final_portfolio_table[35,1]<-Weights_matrix[index_max_CRRA_1,][6]
+final_portfolio_table[36,1]<-Weights_matrix[index_max_CRRA_1,][7]
+final_portfolio_table[37,1]<-Weights_matrix[index_max_CRRA_1,][8]
+final_portfolio_table[38,1]<-Weights_matrix[index_max_CRRA_1,][9]
+final_portfolio_table[39,1]<-Weights_matrix[index_max_CRRA_1,][10]
+final_portfolio_table[40,1]<-ratios_table[4,index_max_CRRA_1]
+final_portfolio_table[41,1]<-(as.numeric(data_2018_2019[calendar[period_num,13,drop=TRUE],4:13])%*%(t(Weights_matrix)[,index_max_CRRA_1]))/Value_initial[index_max_CRRA_1]
+final_portfolio_table[42,1]<-index_max_CRRA_0_1
+final_portfolio_table[43,1]<-Weights_matrix[index_max_CRRA_0_1,][1]
+final_portfolio_table[44,1]<-Weights_matrix[index_max_CRRA_0_1,][2]
+final_portfolio_table[45,1]<-Weights_matrix[index_max_CRRA_0_1,][3]
+final_portfolio_table[46,1]<-Weights_matrix[index_max_CRRA_0_1,][4]
+final_portfolio_table[47,1]<-Weights_matrix[index_max_CRRA_0_1,][5]
+final_portfolio_table[48,1]<-Weights_matrix[index_max_CRRA_0_1,][6]
+final_portfolio_table[49,1]<-Weights_matrix[index_max_CRRA_0_1,][7]
+final_portfolio_table[50,1]<-Weights_matrix[index_max_CRRA_0_1,][8]
+final_portfolio_table[51,1]<-Weights_matrix[index_max_CRRA_0_1,][9]
+final_portfolio_table[52,1]<-Weights_matrix[index_max_CRRA_0_1,][10]
+final_portfolio_table[53,1]<-ratios_table[5,index_max_CRRA_0_1]
+final_portfolio_table[54,1]<-(as.numeric(data_2018_2019[calendar[period_num,13,drop=TRUE],4:13])%*%(t(Weights_matrix)[,index_max_CRRA_0_1]))/Value_initial[index_max_CRRA_0_1]
+final_portfolio_table[55,1]<-index_max_CRRA_0_2
+final_portfolio_table[56,1]<-Weights_matrix[index_max_CRRA_0_2,][1]
+final_portfolio_table[57,1]<-Weights_matrix[index_max_CRRA_0_2,][2]
+final_portfolio_table[58,1]<-Weights_matrix[index_max_CRRA_0_2,][3]
+final_portfolio_table[59,1]<-Weights_matrix[index_max_CRRA_0_2,][4]
+final_portfolio_table[60,1]<-Weights_matrix[index_max_CRRA_0_2,][5]
+final_portfolio_table[61,1]<-Weights_matrix[index_max_CRRA_0_2,][6]
+final_portfolio_table[62,1]<-Weights_matrix[index_max_CRRA_0_2,][7]
+final_portfolio_table[63,1]<-Weights_matrix[index_max_CRRA_0_2,][8]
+final_portfolio_table[64,1]<-Weights_matrix[index_max_CRRA_0_2,][9]
+final_portfolio_table[65,1]<-Weights_matrix[index_max_CRRA_0_2,][10]
+final_portfolio_table[66,1]<-ratios_table[6,index_max_CRRA_0_2]
+final_portfolio_table[67,1]<-(as.numeric(data_2018_2019[calendar[period_num,13,drop=TRUE],4:13])%*%(t(Weights_matrix)[,index_max_CRRA_0_2]))/Value_initial[index_max_CRRA_0_2]
+final_portfolio_table[68,1]<-index_max_CRRA_0_5
+final_portfolio_table[69,1]<-Weights_matrix[index_max_CRRA_0_5,][1]
+final_portfolio_table[70,1]<-Weights_matrix[index_max_CRRA_0_5,][2]
+final_portfolio_table[71,1]<-Weights_matrix[index_max_CRRA_0_5,][3]
+final_portfolio_table[72,1]<-Weights_matrix[index_max_CRRA_0_5,][4]
+final_portfolio_table[73,1]<-Weights_matrix[index_max_CRRA_0_5,][5]
+final_portfolio_table[74,1]<-Weights_matrix[index_max_CRRA_0_5,][6]
+final_portfolio_table[75,1]<-Weights_matrix[index_max_CRRA_0_5,][7]
+final_portfolio_table[76,1]<-Weights_matrix[index_max_CRRA_0_5,][8]
+final_portfolio_table[77,1]<-Weights_matrix[index_max_CRRA_0_5,][9]
+final_portfolio_table[78,1]<-Weights_matrix[index_max_CRRA_0_5,][10]
+final_portfolio_table[79,1]<-ratios_table[7,index_max_CRRA_0_5]
+final_portfolio_table[80,1]<-(as.numeric(data_2018_2019[calendar[period_num,13,drop=TRUE],4:13])%*%(t(Weights_matrix)[,index_max_CRRA_0_5]))/Value_initial[index_max_CRRA_0_5]
+final_portfolio_table[81,1]<-index_max_CRRA_2
+final_portfolio_table[82,1]<-Weights_matrix[index_max_CRRA_2,][1]
+final_portfolio_table[83,1]<-Weights_matrix[index_max_CRRA_2,][2]
+final_portfolio_table[84,1]<-Weights_matrix[index_max_CRRA_2,][3]
+final_portfolio_table[85,1]<-Weights_matrix[index_max_CRRA_2,][4]
+final_portfolio_table[86,1]<-Weights_matrix[index_max_CRRA_2,][5]
+final_portfolio_table[87,1]<-Weights_matrix[index_max_CRRA_2,][6]
+final_portfolio_table[88,1]<-Weights_matrix[index_max_CRRA_2,][7]
+final_portfolio_table[89,1]<-Weights_matrix[index_max_CRRA_2,][8]
+final_portfolio_table[90,1]<-Weights_matrix[index_max_CRRA_2,][9]
+final_portfolio_table[91,1]<-Weights_matrix[index_max_CRRA_2,][10]
+final_portfolio_table[92,1]<-ratios_table[8,index_max_CRRA_2]
+final_portfolio_table[93,1]<-(as.numeric(data_2018_2019[calendar[period_num,13,drop=TRUE],4:13])%*%(t(Weights_matrix)[,index_max_CRRA_2]))/Value_initial[index_max_CRRA_2]
+final_portfolio_table[94,1]<-index_max_CRRA_5
+final_portfolio_table[95,1]<-Weights_matrix[index_max_CRRA_5,][1]
+final_portfolio_table[96,1]<-Weights_matrix[index_max_CRRA_5,][2]
+final_portfolio_table[97,1]<-Weights_matrix[index_max_CRRA_5,][3]
+final_portfolio_table[98,1]<-Weights_matrix[index_max_CRRA_5,][4]
+final_portfolio_table[99,1]<-Weights_matrix[index_max_CRRA_5,][5]
+final_portfolio_table[100,1]<-Weights_matrix[index_max_CRRA_5,][6]
+final_portfolio_table[101,1]<-Weights_matrix[index_max_CRRA_5,][7]
+final_portfolio_table[102,1]<-Weights_matrix[index_max_CRRA_5,][8]
+final_portfolio_table[103,1]<-Weights_matrix[index_max_CRRA_5,][9]
+final_portfolio_table[104,1]<-Weights_matrix[index_max_CRRA_5,][10]
+final_portfolio_table[105,1]<-ratios_table[9,index_max_CRRA_5]
+final_portfolio_table[106,1]<-(as.numeric(data_2018_2019[calendar[period_num,13,drop=TRUE],4:13])%*%(t(Weights_matrix)[,index_max_CRRA_5]))/Value_initial[index_max_CRRA_5]
+final_portfolio_table[107,1]<-index_max_CRRA_10
+final_portfolio_table[108,1]<-Weights_matrix[index_max_CRRA_10,][1]
+final_portfolio_table[109,1]<-Weights_matrix[index_max_CRRA_10,][2]
+final_portfolio_table[110,1]<-Weights_matrix[index_max_CRRA_10,][3]
+final_portfolio_table[111,1]<-Weights_matrix[index_max_CRRA_10,][4]
+final_portfolio_table[112,1]<-Weights_matrix[index_max_CRRA_10,][5]
+final_portfolio_table[113,1]<-Weights_matrix[index_max_CRRA_10,][6]
+final_portfolio_table[114,1]<-Weights_matrix[index_max_CRRA_10,][7]
+final_portfolio_table[115,1]<-Weights_matrix[index_max_CRRA_10,][8]
+final_portfolio_table[116,1]<-Weights_matrix[index_max_CRRA_10,][9]
+final_portfolio_table[117,1]<-Weights_matrix[index_max_CRRA_10,][10]
+final_portfolio_table[118,1]<-ratios_table[10,index_max_CRRA_10]
+final_portfolio_table[119,1]<-(as.numeric(data_2018_2019[calendar[period_num,13,drop=TRUE],4:13])%*%(t(Weights_matrix)[,index_max_CRRA_10]))/Value_initial[index_max_CRRA_10]
+final_portfolio_table[120,1]<-ratios_table[1,1]
+final_portfolio_table[121,1]<-(as.numeric(data_2018_2019[calendar[period_num,13,drop=TRUE],4:13])%*%(t(Weights_matrix)[,1]))/Value_initial[1]
+final_portfolio_table<-data.frame(final_portfolio_table)
+return(final_portfolio_table)
+}
+```
+
+#find optimal portfolio weights for each of 12 periods
+```{r}
+start_time <- Sys.time()
+period_1_final <- simulation_forecast_for_period(final_models_table_1, 1, weights_mat)
+period_2_final <- simulation_forecast_for_period(final_models_table_2, 2, weights_mat)
+period_3_final <- simulation_forecast_for_period(final_models_table_3, 3, weights_mat)
+period_4_final <- simulation_forecast_for_period(final_models_table_4, 4, weights_mat)
+period_5_final <- simulation_forecast_for_period(final_models_table_5, 5, weights_mat)
+period_6_final <- simulation_forecast_for_period(final_models_table_6, 6, weights_mat)
+period_7_final <- simulation_forecast_for_period(final_models_table_7, 7, weights_mat)
+period_8_final <- simulation_forecast_for_period(final_models_table_8, 8, weights_mat)
+period_9_final <- simulation_forecast_for_period(final_models_table_9, 9, weights_mat)
+period_10_final <- simulation_forecast_for_period(final_models_table_10, 10, weights_mat)
+period_11_final <- simulation_forecast_for_period(final_models_table_11, 11, weights_mat)
+period_12_final <- simulation_forecast_for_period(final_models_table_12, 12, weights_mat)
+timediff <- difftime(Sys.time(), start_time)
+cat("Расчёт занял: ", timediff, units(timediff))
+```
+
+```{r}
+total_table<-cbind(period_1_final, period_2_final, period_3_final, period_4_final, period_5_final, period_6_final)
+colnames(total_table)<-c("period_1", "period_2", "period_3", "period_4", "period_5", "period_6")
+total_table_full<-cbind(period_1_final, period_2_final, period_3_final, period_4_final, period_5_final, period_6_final, period_7_final, period_8_final, period_9_final, period_10_final, period_11_final, period_12_final)
+colnames(total_table_full)<-c("period_1", "period_2", "period_3", "period_4", "period_5", "period_6", "period_7", "period_8", "period_9", "period_10", "period_11", "period_12")
+prod(total_table_full[15,])
+prod(total_table_full[28,])
+```
+
+#we write custom function "normal_benchmark_portfolio" in order to implement algorithm for finding optimal Markowitz portfolio weights for each period.
+```{r}
+normal_benchmark_portfolio <- function(period_num, Weights_matrix) {
+  Mu <- apply(data_2018_2019_lnreturn_xts[calendar[period_num,8,drop=TRUE]:calendar[period_num,11,drop=TRUE],1:10],2,mean)
+  corr_mat <- cor(data_2018_2019_lnreturn_xts[calendar[period_num,8,drop=TRUE]:calendar[period_num,11,drop=TRUE],1:10])
+write.xlsx(corr_mat, paste0("correlation_matrix", period_num, ".xlsx"))
+  sim_return_list <- list()
+  for (i in 1:10000) {
+  sim_return_list[[i]] <- mvrnorm(calendar[period_num,15,drop=TRUE], mu = Mu, Sigma = corr_mat)
+  }
+P0_vector <- data_2018_2019[calendar[period_num,12,drop=TRUE]-1,4:13]
+P1 <- list()
+for (i in 1:10000) {
+  P1[[i]] <- P0_vector*exp(apply(sim_return_list[[i]],2,sum))
+}
+P1<-as.data.frame(matrix(unlist(P1),nrow=length(P1),byrow=TRUE))
+Value_initial <- as.matrix(P0_vector) %*% t(Weights_matrix)
+Value_end <- as.matrix(P1) %*% t(Weights_matrix)
+Portfolio_return <- matrix(0, nrow = 10000, ncol = 6001)
+for (i in 1:10000) {
+  Portfolio_return[i,] <- Value_end[i,] / Value_initial
+}
+final_portfolio_table <- matrix(0, nrow = 24, ncol = 1)
+SR_table <- matrix (0, nrow = 2, ncol = 6001)
+for (i in 1:6001) {
+  SR_table[1,i] <- Sharpe_ratio(Portfolio_return[,i])
+  SR_table[2,i] <- Sortino_ratio(Portfolio_return[,i])
+}
+index_max_Sharpe<-which.max(SR_table[1,])
+index_max_Sortino<-which.max(SR_table[2,])
+final_portfolio_table[1,1]<-index_max_Sharpe
+final_portfolio_table[2,1]<-Weights_matrix[index_max_Sharpe,][1]
+final_portfolio_table[3,1]<-Weights_matrix[index_max_Sharpe,][2]
+final_portfolio_table[4,1]<-Weights_matrix[index_max_Sharpe,][3]
+final_portfolio_table[5,1]<-Weights_matrix[index_max_Sharpe,][4]
+final_portfolio_table[6,1]<-Weights_matrix[index_max_Sharpe,][5]
+final_portfolio_table[7,1]<-Weights_matrix[index_max_Sharpe,][6]
+final_portfolio_table[8,1]<-Weights_matrix[index_max_Sharpe,][7]
+final_portfolio_table[9,1]<-Weights_matrix[index_max_Sharpe,][8]
+final_portfolio_table[10,1]<-Weights_matrix[index_max_Sharpe,][9]
+final_portfolio_table[11,1]<-Weights_matrix[index_max_Sharpe,][10]
+final_portfolio_table[12,1]<-(as.numeric(data_2018_2019[calendar[period_num,13,drop=TRUE],4:13])%*%(t(Weights_matrix)[,index_max_Sharpe]))/Value_initial[index_max_Sharpe]
+final_portfolio_table[13,1]<-index_max_Sortino
+final_portfolio_table[14,1]<-Weights_matrix[index_max_Sortino,][1]
+final_portfolio_table[15,1]<-Weights_matrix[index_max_Sortino,][2]
+final_portfolio_table[16,1]<-Weights_matrix[index_max_Sortino,][3]
+final_portfolio_table[17,1]<-Weights_matrix[index_max_Sortino,][4]
+final_portfolio_table[18,1]<-Weights_matrix[index_max_Sortino,][5]
+final_portfolio_table[19,1]<-Weights_matrix[index_max_Sortino,][6]
+final_portfolio_table[20,1]<-Weights_matrix[index_max_Sortino,][7]
+final_portfolio_table[21,1]<-Weights_matrix[index_max_Sortino,][8]
+final_portfolio_table[22,1]<-Weights_matrix[index_max_Sortino,][9]
+final_portfolio_table[23,1]<-Weights_matrix[index_max_Sortino,][10]
+final_portfolio_table[24,1]<-(as.numeric(data_2018_2019[calendar[period_num,13,drop=TRUE],4:13])%*%(t(Weights_matrix)[,index_max_Sortino]))/Value_initial[index_max_Sortino]
+final_portfolio_table<-data.frame(final_portfolio_table)
+return(final_portfolio_table)
+}
+```
+
+#find the optimal weights for the benchmark portfolio for all 12 periods
+```{r}
+period_1_bench<-normal_benchmark_portfolio(1, weights_mat)
+period_2_bench<-normal_benchmark_portfolio(2, weights_mat)
+period_3_bench<-normal_benchmark_portfolio(3, weights_mat)
+period_4_bench<-normal_benchmark_portfolio(4, weights_mat)
+period_5_bench<-normal_benchmark_portfolio(5, weights_mat)
+period_6_bench<-normal_benchmark_portfolio(6, weights_mat)
+period_7_bench<-normal_benchmark_portfolio(7, weights_mat)
+period_8_bench<-normal_benchmark_portfolio(8, weights_mat)
+period_9_bench<-normal_benchmark_portfolio(9, weights_mat)
+period_10_bench<-normal_benchmark_portfolio(10, weights_mat)
+period_11_bench<-normal_benchmark_portfolio(11, weights_mat)
+period_12_bench<-normal_benchmark_portfolio(12, weights_mat)
+total_table_bench_full<-cbind(period_1_bench, period_2_bench, period_3_bench, period_4_bench, period_5_bench, period_6_bench, period_7_bench, period_8_bench, period_9_bench, period_10_bench, period_11_bench, period_12_bench)
+colnames(total_table_bench_full)<-c("period_1", "period_2", "period_3", "period_4", "period_5", "period_6", "period_7", "period_8", "period_9", "period_10", "period_11", "period_12")
+prod(total_table_bench_full[12,])
+prod(total_table_bench_full[24,])
+```
+
+#function to calculate daily return for portfolios and benchmarks
+```{r}
+daily_return <- function(period_num, Weights_matrix, input1, input2) {
+index_max_Sharpe <- as.integer(input1[3,1,drop=TRUE])
+index_max_Sortino <- as.integer(input1[16,1,drop=TRUE])
+index_max_Sharpe_bench <- as.integer(input2[1,1,drop=TRUE])
+index_max_Sortino_bench <- as.integer(input2[13,1,drop=TRUE])
+P0_list <- list()
+P0_list_MOEX10 <- list()
+for (i in 0:(calendar[period_num,15,drop=TRUE]/9-1)) {
+  P0_list[[i+1]] <- data_2018_2019[calendar[period_num,12,drop=TRUE]-1+9*i,4:13]
+  P0_list_MOEX10[[i+1]] <- data_2018_2019[calendar[period_num,12,drop=TRUE]-1+9*i,14]
+}
+P1_list <- list()
+P1_list_MOEX10 <- list()
+for (i in 0:(calendar[period_num,15,drop=TRUE]/9-1)) {
+  P1_list[[i+1]] <- as.numeric(data_2018_2019[calendar[period_num,12,drop=TRUE]-1+9*i+9,4:13])
+  P1_list_MOEX10[[i+1]] <- as.numeric(data_2018_2019[calendar[period_num,12,drop=TRUE]-1+9*i+9,14])
+}
+return_mat <- matrix(0,nrow = 7, ncol = calendar[period_num,15,drop=TRUE]/9)
+for (t in 1:(calendar[period_num,15,drop=TRUE]/9)) {
+Value_initial <- as.matrix(P0_list[[t]]) %*% t(Weights_matrix)
+return_mat[1,t] <- P1_list[[t]]%*%(t(Weights_matrix)[,index_max_Sharpe])/Value_initial[index_max_Sharpe]
+return_mat[2,t] <- P1_list[[t]]%*%(t(Weights_matrix)[,index_max_Sortino])/Value_initial[index_max_Sortino]
+return_mat[3,t] <- P1_list[[t]]%*%(t(Weights_matrix)[,1])/Value_initial[1]
+return_mat[4,t] <- as.numeric(P1_list_MOEX10[[t]]/P0_list_MOEX10[[t]])
+return_mat[5,t] <- P1_list[[t]]%*%(t(Weights_matrix)[,index_max_Sharpe_bench])/Value_initial[index_max_Sharpe_bench]
+return_mat[6,t] <- P1_list[[t]]%*%(t(Weights_matrix)[,index_max_Sortino_bench])/Value_initial[index_max_Sortino_bench]
+return_mat[7,t] <- if (t==1&period_num!=1) {1}else{0}
+}
+return(return_mat)
+}
+```
+
+#calculate vector with cumulative daily return for each portfolio and benchmarks
+```{r}
+ret_d_total_full<-cbind(daily_return(1,weights_mat,period_1_final,period_1_bench),daily_return(2,weights_mat,period_2_final,period_2_bench),daily_return(3,weights_mat,period_3_final,period_3_bench),daily_return(4,weights_mat,period_4_final,period_4_bench),daily_return(5,weights_mat,period_5_final,period_5_bench),daily_return(6,weights_mat,period_6_final,period_6_bench),daily_return(7,weights_mat,period_7_final,period_7_bench),daily_return(8,weights_mat,period_8_final,period_8_bench),daily_return(9,weights_mat,period_9_final,period_9_bench),daily_return(10,weights_mat,period_10_final,period_10_bench),daily_return(11,weights_mat,period_11_final,period_11_bench),daily_return(12,weights_mat,period_12_final,period_12_bench))
+sr_daily_full<-rep(1,dim(ret_d_total_full)[2]+1)
+sortino_daily_full<-rep(1,dim(ret_d_total_full)[2]+1)
+eq_w_daily_full<-rep(1,dim(ret_d_total_full)[2]+1)
+MOEX_daily_full<-rep(1,dim(ret_d_total_full)[2]+1)
+sr_daily_bench_full<-rep(1,dim(ret_d_total_full)[2]+1)
+sortino_daily_bench_full<-rep(1,dim(ret_d_total_full)[2]+1)
+for (t in 2:(dim(ret_d_total_full)[2]+1)) {
+  sr_daily_full[t] <- prod(ret_d_total_full[1,1:(t-1)])
+  sortino_daily_full[t] <- prod(ret_d_total_full[2,1:(t-1)])
+  eq_w_daily_full[t] <- prod(ret_d_total_full[3,1:(t-1)])
+  MOEX_daily_full[t] <- prod(ret_d_total_full[4,1:(t-1)])
+  sr_daily_bench_full[t] <- prod(ret_d_total_full[5,1:(t-1)])
+  sortino_daily_bench_full[t] <- prod(ret_d_total_full[6,1:(t-1)])
+}
+index_full<-1:(dim(ret_d_total_full)[2]+1)
+indicator <- function(x) {
+  if (x[3]==1) {
+    val = as.numeric(x[1])
+  }else{
+    val = NA
+  }
+}
+sr_df_daily_full<-data.frame(Sharp = sr_daily_full, ind = index_full, switch = c(0,as.integer(ret_d_total_full[7,])))
+sr_df_daily_full$switch_val <- apply(sr_df_daily_full,1,indicator)
+sortino_df_daily_full<-data.frame(Sortino = sortino_daily_full, ind = index_full, switch = c(0,ret_d_total_full[7,]))
+sortino_df_daily_full$switch_val <- apply(sortino_df_daily_full,1,indicator)
+eq_w_df_daily_full<-data.frame(eqw=eq_w_daily_full, ind=index_full)
+MOEX_df_daily_full<-data.frame(MOEX=MOEX_daily_full, ind = index_full)
+sortino_df_daily_bench_full<-data.frame(Sortino=sortino_daily_bench_full, ind = index_full, switch = c(0,ret_d_total_full[7,]))
+sortino_df_daily_bench_full$switch_val <- apply(sortino_df_daily_bench_full,1,indicator)
+sr_df_daily_bench_full<-data.frame(Sharp=sr_daily_bench_full, ind = index_full, switch = c(0,ret_d_total_full[7,]))
+sr_df_daily_bench_full$switch_val <- apply(sr_df_daily_bench_full,1,indicator)
+tail(eq_w_daily_full,1)
+```
+
+#plot the comparison of the out-of-sample performance of 2 modeled portfolios with MOEX10 index
+```{r}
+ggplot()+geom_line(data = sr_df_daily_full, aes(x=ind, y=Sharp, color = "SR portfolio"))+geom_line(data = sortino_df_daily_full, aes(x=ind, y=Sortino, color = "Sortino portfolio"))+geom_line(data = MOEX_df_daily_full, aes(x=ind, y=MOEX, color = "MOEX10 index"))+geom_point(data = sr_df_daily_full, aes(x=ind, y = switch_val,shape="portfolio structure change"), size=3,color="red")+geom_point(data = sortino_df_daily_full, aes(x=ind, y = switch_val), size=3,color="blue")+xlab("period")+ylab("cumulative portfolio return")+scale_color_manual("",breaks=c("SR portfolio","Sortino portfolio","MOEX10 index"),values=c("red","blue","black"))+scale_shape_manual("",breaks=c("portfolio structure change"),values=c(19))+theme(panel.background = element_rect(fill = "white",colour="lightgrey"),axis.text=element_text(size=30),axis.title=element_text(size=30),legend.position = "bottom",legend.text = element_text(size=30))
+ggsave("modeled_MOEX10_1.png", width = 20, height = 10)
+```
+
+#plot the comparison of the out-of-sample performance of 2 modeled portfolios with the equally weighted portfolio
+```{r}
+ggplot()+geom_line(data = sr_df_daily_full, aes(x=ind, y=Sharp, color = "SR portfolio"))+geom_line(data = sortino_df_daily_full, aes(x=ind, y=Sortino, color = "Sortino portfolio"))+geom_line(data = eq_w_df_daily_full, aes(x=ind, y=eqw, color = "Equally weighted portfolio"))+scale_color_manual("",values = c("SR portfolio"="red", "Sortino portfolio"="blue", "Equally weighted portfolio"="black"))+geom_point(data = sr_df_daily_full, aes(x=ind, y = switch_val,shape="portfolio structure change"),color="red", size=3)+geom_point(data = sortino_df_daily_full, aes(x=ind, y = switch_val),color="blue", size=3)+scale_shape_manual("",breaks=c("portfolio structure change"),values = c(19))+xlab("period")+ylab("cumulative portfolio return")+theme(panel.background = element_rect(fill = "white",colour="lightgrey"),axis.text=element_text(size=30),axis.title=element_text(size=30),legend.position = "bottom",legend.text = element_text(size=30)) +guides(color = guide_legend(title=NULL))
+ggsave("modeled_eqw_1.png", width = 20, height = 10)
+```
+
+#plot the comparison of the out-of-sample performance of 2 modeled portfolios with the normal portfolio
+```{r}
+ggplot()+geom_line(data = sr_df_daily_full, aes(x=ind, y=Sharp, color = "SR portfolio"))+geom_line(data = sortino_df_daily_full, aes(x=ind, y=Sortino, color = "Sortino portfolio"))+geom_line(data = sr_df_daily_bench_full, aes(x=ind, y=Sharp, color = "SR portfolio (normal distribution)"))+scale_color_manual("",values = c("SR portfolio"="red", "Sortino portfolio"="blue", "SR portfolio (normal distribution)"="black"))+annotate("rect", xmin = 41, xmax = 62, ymin = 1, ymax = 1.55,  alpha = .5, fill="#38f5be")+annotate("text", x = 51, y = 1.4, label = "T=3", color = 'black', size = 8)+annotate("rect", xmin = 115, xmax = 125, ymin = 1, ymax = 1.55,  alpha = .5, fill="#38f5be")+annotate("rect", xmin = 190, xmax = 197, ymin = 1, ymax = 1.55,  alpha = .5, fill="#38f5be")+geom_point(data = sr_df_daily_full, aes(x=ind, y = switch_val,shape="portfolio structure change"),color="red", size=3)+geom_point(data = sortino_df_daily_full, aes(x=ind, y = switch_val),color="blue", size=3)+geom_point(data = sr_df_daily_bench_full, aes(x=ind, y = switch_val),color="black", size=3)+scale_shape_manual("", breaks=c("portfolio structure change"),values=c(19))+xlab("period")+ylab("cumulative portfolio return")+theme(panel.background = element_rect(fill = "white",colour="lightgrey"),axis.text=element_text(size=30),axis.title=element_text(size=30),legend.position = "bottom",legend.text = element_text(size=28)) +guides(color = guide_legend(ncol=2,title=NULL))
+ggsave("modeled_normal_1.png", width = 20, height = 10)
+```
+
+#tables with portfolio weights comparison
+```{r}
+portfolio_weights_comparison_1_period <- matrix(0,nrow=3,ncol=10)*100
+portfolio_weights_comparison_1_period[1,] <- period_1_final[4:13,1,drop=TRUE]*100
+portfolio_weights_comparison_1_period[2,] <- period_1_final[17:26,1,drop=TRUE]*100
+portfolio_weights_comparison_1_period[3,] <- period_1_bench[2:11,1,drop=TRUE]*100
+portfolio_weights_comparison_1_period <- apply(portfolio_weights_comparison_1_period,2,function(x) round(x,2))
+colnames(portfolio_weights_comparison_1_period) <- colnames(data_2018_2019[,4:13])
+rownames(portfolio_weights_comparison_1_period) <- c("Sharpe", "Sortino", "Sharpe normal benchmark")
+write.xlsx(portfolio_weights_comparison_1_period, paste("weights_1period", ".xlsx"))
+```
+
+```{r}
+portfolio_weights_comparison_2_period <- matrix(0,nrow=3,ncol=10)*100
+portfolio_weights_comparison_2_period[1,] <- period_2_final[4:13,1,drop=TRUE]*100
+portfolio_weights_comparison_2_period[2,] <- period_2_final[17:26,1,drop=TRUE]*100
+portfolio_weights_comparison_2_period[3,] <- period_2_bench[2:11,1,drop=TRUE]*100
+portfolio_weights_comparison_2_period <- apply(portfolio_weights_comparison_2_period,2,function(x) round(x,2))
+colnames(portfolio_weights_comparison_2_period) <- colnames(data_2018_2019[,4:13])
+rownames(portfolio_weights_comparison_2_period) <- c("Sharpe", "Sortino", "Sharpe normal benchmark")
+write.xlsx(portfolio_weights_comparison_2_period, paste("weights_2period", ".xlsx"))
+```
+
+```{r}
+portfolio_weights_comparison_3_period <- matrix(0,nrow=3,ncol=10)*100
+portfolio_weights_comparison_3_period[1,] <- period_3_final[4:13,1,drop=TRUE]*100
+portfolio_weights_comparison_3_period[2,] <- period_3_final[17:26,1,drop=TRUE]*100
+portfolio_weights_comparison_3_period[3,] <- period_3_bench[2:11,1,drop=TRUE]*100
+portfolio_weights_comparison_3_period <- apply(portfolio_weights_comparison_3_period,2,function(x) round(x,2))
+colnames(portfolio_weights_comparison_3_period) <- colnames(data_2018_2019[,4:13])
+rownames(portfolio_weights_comparison_3_period) <- c("Sharpe", "Sortino", "Sharpe normal benchmark")
+write.xlsx(portfolio_weights_comparison_3_period, paste("weights_3period", ".xlsx"))
+```
+
+```{r}
+portfolio_weights_comparison_4_period <- matrix(0,nrow=3,ncol=10)*100
+portfolio_weights_comparison_4_period[1,] <- period_4_final[4:13,1,drop=TRUE]*100
+portfolio_weights_comparison_4_period[2,] <- period_4_final[17:26,1,drop=TRUE]*100
+portfolio_weights_comparison_4_period[3,] <- period_4_bench[2:11,1,drop=TRUE]*100
+portfolio_weights_comparison_4_period <- apply(portfolio_weights_comparison_4_period,2,function(x) round(x,2))
+colnames(portfolio_weights_comparison_4_period) <- colnames(data_2018_2019[,4:13])
+rownames(portfolio_weights_comparison_4_period) <- c("Sharpe", "Sortino", "Sharpe normal benchmark")
+write.xlsx(portfolio_weights_comparison_4_period, paste("weights_4period", ".xlsx"))
+```
+
+```{r}
+portfolio_weights_comparison_5_period <- matrix(0,nrow=3,ncol=10)*100
+portfolio_weights_comparison_5_period[1,] <- period_5_final[4:13,1,drop=TRUE]*100
+portfolio_weights_comparison_5_period[2,] <- period_5_final[17:26,1,drop=TRUE]*100
+portfolio_weights_comparison_5_period[3,] <- period_5_bench[2:11,1,drop=TRUE]*100
+portfolio_weights_comparison_5_period <- apply(portfolio_weights_comparison_5_period,2,function(x) round(x,2))
+colnames(portfolio_weights_comparison_5_period) <- colnames(data_2018_2019[,4:13])
+rownames(portfolio_weights_comparison_5_period) <- c("Sharpe", "Sortino", "Sharpe normal benchmark")
+write.xlsx(portfolio_weights_comparison_5_period, paste("weights_5period", ".xlsx"))
+```
+
+```{r}
+portfolio_weights_comparison_6_period <- matrix(0,nrow=3,ncol=10)*100
+portfolio_weights_comparison_6_period[1,] <- period_6_final[4:13,1,drop=TRUE]*100
+portfolio_weights_comparison_6_period[2,] <- period_6_final[17:26,1,drop=TRUE]*100
+portfolio_weights_comparison_6_period[3,] <- period_6_bench[2:11,1,drop=TRUE]*100
+portfolio_weights_comparison_6_period <- apply(portfolio_weights_comparison_6_period,2,function(x) round(x,2))
+colnames(portfolio_weights_comparison_6_period) <- colnames(data_2018_2019[,4:13])
+rownames(portfolio_weights_comparison_6_period) <- c("Sharpe", "Sortino", "Sharpe normal benchmark")
+write.xlsx(portfolio_weights_comparison_6_period, paste("weights_6period", ".xlsx"))
+```
+
+```{r}
+portfolio_weights_comparison_7_period <- matrix(0,nrow=3,ncol=10)*100
+portfolio_weights_comparison_7_period[1,] <- period_7_final[4:13,1,drop=TRUE]*100
+portfolio_weights_comparison_7_period[2,] <- period_7_final[17:26,1,drop=TRUE]*100
+portfolio_weights_comparison_7_period[3,] <- period_7_bench[2:11,1,drop=TRUE]*100
+portfolio_weights_comparison_7_period <- apply(portfolio_weights_comparison_7_period,2,function(x) round(x,2))
+colnames(portfolio_weights_comparison_7_period) <- colnames(data_2018_2019[,4:13])
+rownames(portfolio_weights_comparison_7_period) <- c("Sharpe", "Sortino", "Sharpe normal benchmark")
+write.xlsx(portfolio_weights_comparison_7_period, paste("weights_7period", ".xlsx"))
+```
+
+```{r}
+portfolio_weights_comparison_8_period <- matrix(0,nrow=3,ncol=10)*100
+portfolio_weights_comparison_8_period[1,] <- period_8_final[4:13,1,drop=TRUE]*100
+portfolio_weights_comparison_8_period[2,] <- period_8_final[17:26,1,drop=TRUE]*100
+portfolio_weights_comparison_8_period[3,] <- period_8_bench[2:11,1,drop=TRUE]*100
+portfolio_weights_comparison_8_period <- apply(portfolio_weights_comparison_8_period,2,function(x) round(x,2))
+colnames(portfolio_weights_comparison_8_period) <- colnames(data_2018_2019[,4:13])
+rownames(portfolio_weights_comparison_8_period) <- c("Sharpe", "Sortino", "Sharpe normal benchmark")
+write.xlsx(portfolio_weights_comparison_8_period, paste("weights_8period", ".xlsx"))
+```
+
+```{r}
+portfolio_weights_comparison_9_period <- matrix(0,nrow=3,ncol=10)*100
+portfolio_weights_comparison_9_period[1,] <- period_9_final[4:13,1,drop=TRUE]*100
+portfolio_weights_comparison_9_period[2,] <- period_9_final[17:26,1,drop=TRUE]*100
+portfolio_weights_comparison_9_period[3,] <- period_9_bench[2:11,1,drop=TRUE]*100
+portfolio_weights_comparison_9_period <- apply(portfolio_weights_comparison_9_period,2,function(x) round(x,2))
+colnames(portfolio_weights_comparison_9_period) <- colnames(data_2018_2019[,4:13])
+rownames(portfolio_weights_comparison_9_period) <- c("Sharpe", "Sortino", "Sharpe normal benchmark")
+write.xlsx(portfolio_weights_comparison_9_period, paste("weights_9period", ".xlsx"))
+```
+
+```{r}
+portfolio_weights_comparison_10_period <- matrix(0,nrow=3,ncol=10)*100
+portfolio_weights_comparison_10_period[1,] <- period_10_final[4:13,1,drop=TRUE]*100
+portfolio_weights_comparison_10_period[2,] <- period_10_final[17:26,1,drop=TRUE]*100
+portfolio_weights_comparison_10_period[3,] <- period_10_bench[2:11,1,drop=TRUE]*100
+portfolio_weights_comparison_10_period <- apply(portfolio_weights_comparison_10_period,2,function(x) round(x,2))
+colnames(portfolio_weights_comparison_10_period) <- colnames(data_2018_2019[,4:13])
+rownames(portfolio_weights_comparison_10_period) <- c("Sharpe", "Sortino", "Sharpe normal benchmark")
+write.xlsx(portfolio_weights_comparison_10_period, paste("weights_10period", ".xlsx"))
+```
+
+```{r}
+portfolio_weights_comparison_11_period <- matrix(0,nrow=3,ncol=10)*100
+portfolio_weights_comparison_11_period[1,] <- period_11_final[4:13,1,drop=TRUE]*100
+portfolio_weights_comparison_11_period[2,] <- period_11_final[17:26,1,drop=TRUE]*100
+portfolio_weights_comparison_11_period[3,] <- period_11_bench[2:11,1,drop=TRUE]*100
+portfolio_weights_comparison_11_period <- apply(portfolio_weights_comparison_11_period,2,function(x) round(x,2))
+colnames(portfolio_weights_comparison_11_period) <- colnames(data_2018_2019[,4:13])
+rownames(portfolio_weights_comparison_11_period) <- c("Sharpe", "Sortino", "Sharpe normal benchmark")
+write.xlsx(portfolio_weights_comparison_11_period, paste("weights_11period", ".xlsx"))
+```
+
+```{r}
+portfolio_weights_comparison_12_period <- matrix(0,nrow=3,ncol=10)*100
+portfolio_weights_comparison_12_period[1,] <- period_12_final[4:13,1,drop=TRUE]*100
+portfolio_weights_comparison_12_period[2,] <- period_12_final[17:26,1,drop=TRUE]*100
+portfolio_weights_comparison_12_period[3,] <- period_12_bench[2:11,1,drop=TRUE]*100
+portfolio_weights_comparison_12_period <- apply(portfolio_weights_comparison_12_period,2,function(x) round(x,2))
+colnames(portfolio_weights_comparison_12_period) <- colnames(data_2018_2019[,4:13])
+rownames(portfolio_weights_comparison_12_period) <- c("Sharpe", "Sortino", "Sharpe normal benchmark")
+write.xlsx(portfolio_weights_comparison_12_period, paste("weights_12period", ".xlsx"))
+```
+
+```{r}
+final_models_table_all <- rbind(final_models_table_1, final_models_table_2, final_models_table_3, final_models_table_4, final_models_table_5, final_models_table_6, final_models_table_7, final_models_table_8, final_models_table_9, final_models_table_10, final_models_table_11, final_models_table_12)
+final_models_table_all$period <- c(rep(1,10),rep(2,10),rep(3,10),rep(4,10),rep(5,10),rep(6,10),rep(7,10),rep(8,10),rep(9,10),rep(10,10),rep(11,10),rep(12,10))
+final_models_table_all$stocks <- rep(rownames(final_models_table_1),12)
+write.xlsx(final_models_table_all, paste("pivot_models_all", ".xlsx"))
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
